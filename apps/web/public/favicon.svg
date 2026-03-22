@@ -1,0 +1,16 @@
+<svg width="512" height="512" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark Background -->
+  <rect width="100" height="100" rx="20" fill="#141714"/>
+  
+  <!-- Dial Ring -->
+  <circle cx="50" cy="50" r="35" stroke="white" stroke-width="4"/>
+  
+  <!-- Ticks -->
+  <path d="M50 22V26M70 28L67 31M78 50H74M70 72L67 69M50 78V74M30 72L33 69M22 50H26M30 28L33 31" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- Center Knob -->
+  <circle cx="50" cy="50" r="22" fill="white"/>
+  
+  <!-- Indicator Notch -->
+  <rect x="48" y="30" width="4" height="6" fill="#141714"/>
+</svg>

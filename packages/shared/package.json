@@ -1,0 +1,36 @@
+{
+  "name": "@safed/shared",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./types": {
+      "types": "./types.d.ts",
+      "default": "./types.js"
+    },
+    "./locale": {
+      "types": "./locale.d.ts",
+      "default": "./locale.js"
+    },
+    "./currency": {
+      "types": "./currency.d.ts",
+      "default": "./currency.js"
+    },
+    "./category": {
+      "types": "./category.d.ts",
+      "default": "./category.js"
+    },
+    "./api": {
+      "types": "./api.d.ts",
+      "default": "./api.js"
+    }
+  },
+  "dependencies": {
+    "@safed/i18n": "file:../i18n"
+  }
+}

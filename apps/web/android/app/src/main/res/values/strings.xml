@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Safed</string>
+    <string name="title_activity_main">Safed</string>
+    <string name="package_name">com.gastoscajafuerte.app</string>
+    <string name="custom_url_scheme">com.gastoscajafuerte.app</string>
+</resources>

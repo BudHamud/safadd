@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="100dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+
+    <!-- Outer Ring -->
+    <path
+        android:pathData="M 50 5 A 45 45 0 1 0 50 95 A 45 45 0 1 0 50 5"
+        android:strokeWidth="4"
+        android:strokeColor="#FFFFFF" />
+
+    <!-- Ticks -->
+    <path
+        android:pathData="M50 12v6 M76.87 23.13l-4.24 4.24 M88 50h-6 M76.87 76.87l-4.24-4.24 M50 88v-6 M23.13 76.87l4.24-4.24 M12 50h6 M23.13 23.13l4.24 4.24 M69.56 16.3l-3.21 5.3 M83.7 30.44l-5.3 3.21 M83.7 69.56l-5.3-3.21 M69.56 83.7l-3.21-5.3 M30.44 83.7l3.21-5.3 M16.3 69.56l5.3-3.21 M16.3 30.44l5.3 3.21 M30.44 16.3l3.21 5.3 M60.35 13.5l-1.55 5.79 M86.5 39.65l-5.79 1.55 M86.5 60.35l-5.79-1.55 M60.35 86.5l-1.55-5.79 M39.65 86.5l1.55-5.79 M13.5 60.35l5.79-1.55 M13.5 39.65l5.79 1.55 M39.65 13.5l1.55 5.79"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- Main Dial Handle -->
+    <path
+        android:pathData="M 50 22 A 28 28 0 1 0 50 78 A 28 28 0 1 0 50 22"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Inner detail -->
+    <path
+        android:pathData="M 50 32 A 18 18 0 1 0 50 68 A 18 18 0 1 0 50 32"
+        android:strokeWidth="1"
+        android:strokeColor="#4DFFFFFF" />
+
+    <!-- Dial Indicator / Notch. Placed in a group so we can animate rotation around the center (50,50) -->
+    <group
+        android:name="notch_group"
+        android:pivotX="50"
+        android:pivotY="50">
+        <path
+            android:pathData="M 48 26 L 52 26 L 52 36 L 48 36 Z"
+            android:fillColor="#141714" />
+    </group>
+
+</vector>

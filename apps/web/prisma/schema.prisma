@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String        @id @default(uuid())
+  username     String        @unique
+  password     String
+  authId       String?       @unique // Supabase Auth UUID (auth.users.id)
+  role         String        @default("user") // "admin" | "user"
+  monthlyGoal  Float         @default(3000)
+  transactions Transaction[]
+  scanUsage    ScanUsage[]
+  pendingNotifs PendingNotification[]
+  createdAt    DateTime      @default(now())
+}
+
+model Transaction {
+  id                String   @id @default(uuid())
+  desc              String
+  amount            Float
+  amountUSD         Float?
+  amountARS         Float?
+  amountILS         Float?
+  amountEUR         Float?
+  tag               String
+  type              String
+  date              String
+  icon              String
+  details           String?
+  excludeFromBudget Boolean  @default(false)
+  goalType          String   @default("meta")
+  isCancelled       Boolean  @default(false)
+  periodicity       Int?
+  paymentMethod     String?
+  cardDigits        String?
+  user              User     @relation(fields: [userId], references: [id])
+  userId            String
+  createdAt         DateTime @default(now())
+}
+
+model ScanUsage {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  date      String   // YYYY-MM-DD — one record per user per day
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date]) // One row per user per day
+}
+
+model PendingNotification {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  bankName    String
+  merchant    String
+  amount      Float
+  currency    String
+  type        String   // "expense" | "income"
+  tag         String
+  rawText     String
+  transaction Json     // The prepared transaction object
+  createdAt   DateTime @default(now())
+}

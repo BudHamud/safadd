@@ -1,0 +1,56 @@
+{
+  "name": "gastos-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "prisma generate",
+    "patch:android": "node scripts/apply-android-notification-listener-patch.cjs",
+    "cap:dev": "npm run patch:android && cp capacitor.config.dev.ts capacitor.config.ts && npx cap sync android",
+    "cap:prod": "npm run patch:android && cp capacitor.config.prod.ts capacitor.config.ts && npx cap sync android",
+    "apk:dev": "npm run patch:android && cp capacitor.config.dev.ts capacitor.config.ts && npx cap sync android && cd android && gradlew.bat assembleDebug",
+    "apk:prod": "npm run patch:android && cp capacitor.config.prod.ts capacitor.config.ts && npx cap sync android && cd android && gradlew.bat assembleRelease",
+    "aab:prod": "npm run patch:android && cp capacitor.config.prod.ts capacitor.config.ts && npx cap sync android && cd android && gradlew.bat bundleRelease",
+    "aab:verify": "jarsigner -verify -verbose -certs android/app/build/outputs/bundle/release/app-release.aab"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@posx/capacitor-notifications-listener": "^5.0.7",
+    "@prisma/client": "5.22.0",
+    "@safed/i18n": "file:../../packages/i18n",
+    "@safed/shared": "file:../../packages/shared",
+    "@supabase/supabase-js": "^2.98.0",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
+    "lucide-react": "^0.575.0",
+    "next": "16.1.6",
+    "port-kill": "^1.8.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@types/react": "^19.2.14",
+    "dotenv": "^17.3.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "prisma": "5.22.0",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "@posx/capacitor-notifications-listener": {
+      "@capacitor/core": "$@capacitor/core"
+    },
+    "@capacitor/cli": {
+      "tar": "7.5.11"
+    }
+  }
+}

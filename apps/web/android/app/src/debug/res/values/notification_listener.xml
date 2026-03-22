@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <bool name="notification_listener_use_foreground_service">true</bool>
+    <bool name="notification_listener_use_aggressive_rebind">true</bool>
+</resources>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="128dp"
+    android:height="128dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <!-- Dial Ring -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:pathData="M 50,50 m -45,0 a 45,45 0 1,1 90,0 a 45,45 0 1,1 -90,0" />
+    
+    <!-- Ticks -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M50 12V18M76.87 23.13L72.63 27.37M88 50H82M76.87 76.87L72.63 72.63M50 88V82M23.13 76.87L27.37 72.63M12 50H18M23.13 23.13L27.37 27.37" />
+
+    <!-- Center Knob -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 50,50 m -28,0 a 28,28 0 1,1 56,0 a 28,28 0 1,1 -56,0" />
+        
+    <!-- Notch -->
+    <path
+        android:fillColor="#141714"
+        android:pathData="M48 26h4v8h-4z" />
+</vector>
