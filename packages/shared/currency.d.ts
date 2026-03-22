@@ -2,7 +2,7 @@ import type { SupportedCurrency, Transaction, ExchangeRateSnapshot } from './typ
 
 export declare const SUPPORTED_CURRENCIES: readonly SupportedCurrency[];
 
-export declare function getCurrencySymbol(currency: SupportedCurrency): string;
+export declare function getCurrencySymbol(currency: SupportedCurrency | string): string;
 
 export declare function getTransactionAmount(
   tx: Pick<Transaction, 'amount' | 'amountUSD' | 'amountARS' | 'amountILS' | 'amountEUR'>,
