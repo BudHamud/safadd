@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "web": "npm run dev -w apps/web",
-    "mobile": "npm run start -w apps/mobile"
+    "mobile": "npm run start -w apps/mobile",
+    "build:web": "npm run build -w apps/web"
   }
 }
