@@ -1,15 +1,12 @@
 {
   "name": "safadd",
   "private": true,
-  "overrides": {
-    "react-native-svg": "15.12.1"
-  },
-  "dependencies": {
-    "react-native-svg": "15.12.1"
-  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "web": "pnpm --dir web dev",
-    "mobile": "pnpm --dir mobile start",
-    "build:web": "pnpm --dir web build"
+    "web": "npm run dev -w apps/web",
+    "mobile": "npm run start -w apps/mobile"
   }
 }
