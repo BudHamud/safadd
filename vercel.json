@@ -1,6 +1,6 @@
 {
-  "installCommand": "pnpm install --filter ./web... --no-frozen-lockfile",
-  "buildCommand": "pnpm --dir web build",
+  "installCommand": "cd ../.. && pnpm install --filter ./apps/safadd/web... --no-frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --dir apps/safadd/web build",
   "outputDirectory": "web/.next",
   "framework": "nextjs"
 }
