@@ -26,11 +26,20 @@ function formatCurrency(val, sym) {
   })}`;
 }
 
+function normalizeShortMonthOutput(value, lang) {
+  const cleaned = String(value).replace(/\./g, '');
+
+  if (lang !== 'es') return cleaned;
+
+  return cleaned.replace(/\bsept\b/gi, 'sep');
+}
+
 /** Format a Date as a short month label (e.g. "Jan", "ene"). */
 function formatMonthLabel(date, lang, options) {
-  return new Intl.DateTimeFormat(getLocale(lang), options || { month: 'short' })
-    .format(date)
-    .replace('.', '');
+  return normalizeShortMonthOutput(
+    new Intl.DateTimeFormat(getLocale(lang), options || { month: 'short' }).format(date),
+    lang,
+  );
 }
 
 function parseDateValue(value) {
@@ -62,10 +71,18 @@ function parseDateValue(value) {
 
 /** Format an ISO date string as 'DD MMM' in the locale. */
 function formatShortDate(value, lang) {
-  return parseDateValue(value).toLocaleDateString(getLocale(lang), {
+  const parts = new Intl.DateTimeFormat(getLocale(lang), {
     day: '2-digit',
     month: 'short',
-  });
+  }).formatToParts(parseDateValue(value));
+
+  return parts
+    .map((part) => (
+      part.type === 'month'
+        ? normalizeShortMonthOutput(part.value, lang)
+        : part.value
+    ))
+    .join('');
 }
 
 /** Format an ISO date string as 'DD MMMM YYYY' in the locale. */

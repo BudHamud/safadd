@@ -31,6 +31,6 @@
     }
   },
   "dependencies": {
-    "@safed/i18n": "file:../i18n"
+    "@safed/i18n": "workspace:*"
   }
 }

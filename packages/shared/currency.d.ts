@@ -6,19 +6,20 @@ export declare function getCurrencySymbol(currency: SupportedCurrency | string):
 
 export declare function getTransactionAmount(
   tx: Pick<Transaction, 'amount' | 'amountUSD' | 'amountARS' | 'amountILS' | 'amountEUR'>,
-  currency: SupportedCurrency
+  currency: SupportedCurrency | string,
+  snapshot?: ExchangeRateSnapshot | null,
 ): number;
 
 export declare function convertAmount(
   amount: number,
-  from: SupportedCurrency,
-  to: SupportedCurrency,
+  from: SupportedCurrency | string,
+  to: SupportedCurrency | string,
   snapshot: ExchangeRateSnapshot
 ): number;
 
 export declare function buildStoredAmountsFromSnapshot(
   amount: number,
-  currency: SupportedCurrency,
+  currency: SupportedCurrency | string,
   snapshot: ExchangeRateSnapshot
 ): {
   amount: number;

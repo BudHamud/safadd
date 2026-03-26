@@ -1,6 +1,6 @@
 {
-  "installCommand": "npm install",
-  "buildCommand": "npm run build -w apps/web",
-  "outputDirectory": "apps/web/.next",
+  "installCommand": "pnpm install --filter ./web... --no-frozen-lockfile",
+  "buildCommand": "pnpm --dir web build",
+  "outputDirectory": "web/.next",
   "framework": "nextjs"
 }

@@ -1,24 +1,51 @@
 // ── Currency utilities ─────────────────────────────────────────────────────
 // Pure functions — no platform dependencies. Works in Next.js and React Native.
 
-const SUPPORTED_CURRENCIES = ['ILS', 'USD', 'ARS', 'EUR'];
+const SUPPORTED_CURRENCIES = [
+  'ILS', 'USD', 'ARS', 'EUR',
+  'GBP', 'JPY', 'CNY', 'CAD', 'AUD', 'CHF',
+  'HKD', 'SGD', 'SEK', 'NOK', 'DKK', 'NZD',
+  'MXN', 'BRL', 'INR', 'KRW', 'SAR', 'AED',
+  'TRY', 'ZAR', 'PLN', 'CZK', 'HUF',
+  'CLP', 'COP', 'PEN', 'UYU', 'PYG', 'BOB',
+];
 
-/** Returns the display symbol for a supported currency. */
+/**
+ * Returns the display symbol for a currency using the Intl API.
+ * Falls back to the currency code when Intl is unavailable.
+ */
 function getCurrencySymbol(currency) {
-  if (currency === 'ILS') return '₪';
-  if (currency === 'EUR') return '€';
-  return '$'; // USD and ARS both use $
+  try {
+    const formatted = (0).toLocaleString('en', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+    // Strip digits, spaces, commas, dots — keep only the symbol portion
+    const symbol = formatted.replace(/[\d,.\s]/g, '').trim();
+    return symbol || currency;
+  } catch {
+    return currency;
+  }
 }
 
 /**
- * Returns the transaction amount in the requested currency,
- * falling back to the base `amount` field if the specific field is missing.
+ * Returns the transaction amount in the requested currency.
+ * For the four stored columns (USD/ARS/ILS/EUR) uses the DB value directly.
+ * For any other currency, converts from amountUSD using the provided snapshot.
+ * Falls back to the base `amount` field (ILS) when no snapshot is available.
  */
-function getTransactionAmount(tx, currency) {
+function getTransactionAmount(tx, currency, snapshot) {
   if (currency === 'USD' && tx.amountUSD != null) return tx.amountUSD;
   if (currency === 'ARS' && tx.amountARS != null) return tx.amountARS;
   if (currency === 'EUR' && tx.amountEUR != null) return tx.amountEUR;
   if (currency === 'ILS' && tx.amountILS != null) return tx.amountILS;
+  // Extended currencies — convert from stored USD amount using snapshot rates
+  if (tx.amountUSD != null && snapshot && snapshot.rates) {
+    const rate = snapshot.rates[currency];
+    if (Number.isFinite(rate) && rate > 0) return tx.amountUSD * rate;
+  }
   return tx.amount;
 }
 

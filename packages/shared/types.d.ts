@@ -1,4 +1,10 @@
-export type SupportedCurrency = 'ILS' | 'USD' | 'ARS' | 'EUR';
+export type SupportedCurrency =
+  | 'ILS' | 'USD' | 'ARS' | 'EUR'
+  | 'GBP' | 'JPY' | 'CNY' | 'CAD' | 'AUD' | 'CHF'
+  | 'HKD' | 'SGD' | 'SEK' | 'NOK' | 'DKK' | 'NZD'
+  | 'MXN' | 'BRL' | 'INR' | 'KRW' | 'SAR' | 'AED'
+  | 'TRY' | 'ZAR' | 'PLN' | 'CZK' | 'HUF'
+  | 'CLP' | 'COP' | 'PEN' | 'UYU' | 'PYG' | 'BOB';
 export type TransactionType = 'income' | 'expense';
 
 /** Unified Transaction shape — superset of web and mobile fields. */
@@ -28,7 +34,7 @@ export interface Transaction {
 
 /** Exchange rate snapshot returned by the /api/exchange-rates endpoint. */
 export interface ExchangeRateSnapshot {
-  rates: { USD: number; ARS: number; ILS: number; EUR: number };
+  rates: Record<string, number>;
   usdToArs: number;
 }
 

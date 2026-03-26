@@ -3,6 +3,40 @@
 
 const DEFAULT_API_BASE = 'https://zafe.vercel.app';
 
+function trimTrailingSlash(value) {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+function isDevelopmentBuild() {
+  if (typeof __DEV__ !== 'undefined') return __DEV__;
+  if (typeof process === 'undefined') return false;
+  return process.env.NODE_ENV !== 'production';
+}
+
+function isPrivateHostname(hostname) {
+  const normalizedHost = hostname.toLowerCase();
+
+  if (
+    normalizedHost === 'localhost' ||
+    normalizedHost === '127.0.0.1' ||
+    normalizedHost === '0.0.0.0' ||
+    normalizedHost === '::1' ||
+    normalizedHost.endsWith('.local')
+  ) {
+    return true;
+  }
+
+  if (/^10\./.test(normalizedHost) || /^192\.168\./.test(normalizedHost)) {
+    return true;
+  }
+
+  const match = normalizedHost.match(/^172\.(\d{1,3})\./);
+  if (!match) return false;
+
+  const secondOctet = Number(match[1]);
+  return secondOctet >= 16 && secondOctet <= 31;
+}
+
 /**
  * Resolves the API base URL from env vars (supports both EXPO_PUBLIC_ and
  * NEXT_PUBLIC_ prefixes) with a fallback to the production URL.
@@ -14,7 +48,21 @@ function getApiBase() {
     ''
   ).trim();
   if (!raw) return DEFAULT_API_BASE;
-  return raw.endsWith('/') ? raw.slice(0, -1) : raw;
+
+  const normalizedBase = trimTrailingSlash(raw);
+
+  try {
+    const parsed = new URL(normalizedBase);
+    const isDev = isDevelopmentBuild();
+
+    if (!isDev && (parsed.protocol !== 'https:' || isPrivateHostname(parsed.hostname))) {
+      return DEFAULT_API_BASE;
+    }
+
+    return normalizedBase;
+  } catch {
+    return DEFAULT_API_BASE;
+  }
 }
 
 /**

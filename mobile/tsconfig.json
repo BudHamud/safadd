@@ -1,0 +1,26 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@safed/i18n": ["../packages/i18n/index.d.ts"],
+      "@safed/shared": ["../packages/shared/index.d.ts"],
+      "@safed/shared/*": ["../packages/shared/*"],
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "exclude": [
+    "android",
+    "metro-vendor"
+  ]
+}
