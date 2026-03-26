@@ -1,5 +1,5 @@
 {
-  "installCommand": "corepack enable && corepack prepare pnpm@10.33.0 --activate && pnpm install --filter gastos-app...",
+  "installCommand": "pnpm install --filter gastos-app...",
   "buildCommand": "pnpm --filter gastos-app build",
   "outputDirectory": "web/.next",
   "framework": "nextjs"
