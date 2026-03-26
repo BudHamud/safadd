@@ -1,6 +1,6 @@
 {
-  "installCommand": "npm install",
-  "buildCommand": "npm run build -w apps/web",
-  "outputDirectory": "apps/web/.next",
+  "installCommand": "cd ../.. && pnpm install --filter ./apps/safadd/web... --frozen-lockfile --prefer-offline --ignore-scripts --reporter=append-only",
+  "buildCommand": "cd ../.. && pnpm --dir apps/safadd/web exec prisma generate && pnpm --dir apps/safadd/web build",
+  "outputDirectory": "web/.next",
   "framework": "nextjs"
 }

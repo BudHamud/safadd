@@ -2,11 +2,13 @@
   "name": "safadd",
   "private": true,
   "workspaces": [
-    "apps/*",
+    "web",
+    "mobile",
     "packages/*"
   ],
   "scripts": {
-    "web": "npm run dev -w apps/web",
-    "mobile": "npm run start -w apps/mobile"
+    "web": "npm run dev -w web",
+    "mobile": "npm run start -w mobile",
+    "build:web": "npm run build -w web"
   }
 }
