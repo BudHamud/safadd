@@ -1,6 +1,6 @@
 {
-  "installCommand": "cd ../.. && pnpm install --filter gastos-app... --prefer-offline --frozen-lockfile --reporter=append-only",
-  "buildCommand": "cd ../.. && pnpm --dir apps/safadd/web build",
+  "installCommand": "cd ../.. && pnpm --filter gastos-app... install --prefer-offline --frozen-lockfile --ignore-scripts",
+  "buildCommand": "cd ../.. && pnpm --dir apps/safadd/web exec prisma generate && pnpm --dir apps/safadd/web build",
   "outputDirectory": "web/.next",
   "framework": "nextjs"
 }
