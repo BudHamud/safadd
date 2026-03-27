@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseAdminClient, requireAuth } from '../../../../../lib/supabase-server';
+import { requireAuth, updateAuthenticatedSupabaseUser } from '../../../../../lib/supabase-server';
 import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, normalizeEmail } from '../../../../../lib/security';
 
 export async function POST(req: Request) {
@@ -34,8 +34,7 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'same_email' }, { status: 400 });
         }
 
-        const supabaseAdmin = createSupabaseAdminClient();
-        const { data, error } = await supabaseAdmin.auth.admin.updateUserById(auth.user.id, {
+        const { data, error } = await updateAuthenticatedSupabaseUser(auth.accessToken ?? '', {
             email: normalizedEmail,
         });
 
@@ -44,7 +43,8 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'update_email_error' }, { status: 400 });
         }
 
-        return NextResponse.json({ email: data.user?.email ?? normalizedEmail });
+        const nextEmail = typeof data?.user?.email === 'string' ? data.user.email : normalizedEmail;
+        return NextResponse.json({ email: nextEmail });
     } catch (error) {
         console.error('[AUTH EMAIL CHANGE]', error);
         return NextResponse.json({ error: 'server_error' }, { status: 500 });

@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { supabaseAdmin, requireAuth } from '../../../lib/supabase-server';
+import { requireAuth } from '../../../lib/supabase-server';
+import { prisma } from '../../../lib/prisma';
 import { consumeRateLimit, enforceSameOrigin, sanitizeTransactionInput } from '../../../lib/security';
 
 // Helper: obtener userId interno a partir del authId de Supabase
 async function resolveUserId(authId: string): Promise<string | null> {
-    const { data: user } = await supabaseAdmin
-        .from('User').select('id').eq('authId', authId).maybeSingle();
+    const user = await prisma.user.findUnique({ where: { authId }, select: { id: true } });
     return user?.id ?? null;
 }
 
@@ -18,9 +18,11 @@ export async function GET(req: Request) {
     if (!userId) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     try {
-        const { data: transactions } = await supabaseAdmin
-            .from('Transaction').select('*').eq('userId', userId).order('createdAt', { ascending: false });
-        return NextResponse.json(transactions ?? []);
+        const transactions = await prisma.transaction.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+        });
+        return NextResponse.json(transactions);
     } catch (err) {
         console.error(err);
         return NextResponse.json({ error: 'Error del servidor' }, { status: 500 });
@@ -68,11 +70,7 @@ export async function POST(req: Request) {
                 });
             }
 
-            const { error: insertError } = await supabaseAdmin.from('Transaction').insert(rows);
-            if (insertError) {
-                console.error('[TRANSACTIONS POST batch] insert error:', insertError);
-                return NextResponse.json({ error: 'Error guardando importación' }, { status: 500 });
-            }
+            await prisma.transaction.createMany({ data: rows });
 
             return NextResponse.json({ count: data.length });
         }
@@ -82,15 +80,11 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: sanitized.error }, { status: 400 });
         }
 
-        const { data: tx, error: insertError } = await supabaseAdmin.from('Transaction').insert({
+        const tx = await prisma.transaction.create({ data: {
             id: randomUUID(),
             ...sanitized.data,
             userId,
-        }).select().single();
-        if (insertError || !tx) {
-            console.error('[TRANSACTIONS POST] insert error:', insertError);
-            return NextResponse.json({ error: insertError?.message ?? 'Error guardando transacción' }, { status: 500 });
-        }
+        } });
         return NextResponse.json(tx);
     } catch (err) {
         console.error(err);
@@ -121,13 +115,11 @@ export async function DELETE(req: Request) {
 
     try {
         if (id === 'all') {
-            await supabaseAdmin.from('Transaction').delete().eq('userId', userId);
+            await prisma.transaction.deleteMany({ where: { userId } });
         } else {
-            // Verificar ownership antes de borrar (previene IDOR)
-            const { data: tx } = await supabaseAdmin
-                .from('Transaction').select('id').eq('id', id).eq('userId', userId).maybeSingle();
+            const tx = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true } });
             if (!tx) return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
-            await supabaseAdmin.from('Transaction').delete().eq('id', id);
+            await prisma.transaction.delete({ where: { id } });
         }
         return NextResponse.json({ success: true });
     } catch (err) {
@@ -163,14 +155,10 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: sanitized.error }, { status: 400 });
         }
 
-        // Verificar que la transacción pertenece al usuario (previene IDOR)
-        const { data: existing } = await supabaseAdmin
-            .from('Transaction').select('id').eq('id', id).eq('userId', userId).maybeSingle();
+        const existing = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true } });
         if (!existing) return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
 
-        const { data: tx } = await supabaseAdmin.from('Transaction').update({
-            ...sanitized.data,
-        }).eq('id', id).select().single();
+        const tx = await prisma.transaction.update({ where: { id }, data: sanitized.data });
         return NextResponse.json(tx);
     } catch (err) {
         console.error(err);

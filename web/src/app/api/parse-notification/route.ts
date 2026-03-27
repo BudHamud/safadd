@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, supabaseAdmin } from '../../../lib/supabase-server';
+import { requireAuth } from '../../../lib/supabase-server';
+import { prisma } from '../../../lib/prisma';
 import { parseBankNotification } from '../../../lib/bankNotificationParser';
 import { getExchangeRateSnapshot } from '../../../lib/exchange-rates-server';
 import { consumeRateLimit, enforceSameOrigin, normalizeText, sanitizeTransactionInput } from '../../../lib/security';
 
 async function resolveUserId(authId: string) {
-    const { data: user } = await supabaseAdmin
-        .from('User').select('id').eq('authId', authId).maybeSingle();
+    const user = await prisma.user.findUnique({ where: { authId }, select: { id: true } });
     return user?.id ?? null;
 }
 
@@ -116,13 +116,14 @@ export async function POST(req: NextRequest) {
 
         // ── Deduplicación: Si ya existe la misma notificación en los últimos 60s, devolver esa ──
         const sixtySecondsAgo = new Date(Date.now() - 60 * 1000).toISOString();
-        const { data: existing } = await supabaseAdmin
-            .from('PendingNotification')
-            .select('id')
-            .eq('userId', userId)
-            .eq('rawText', parsed.rawText)
-            .gte('createdAt', sixtySecondsAgo)
-            .maybeSingle();
+        const existing = await prisma.pendingNotification.findFirst({
+            where: {
+                userId,
+                rawText: parsed.rawText,
+                createdAt: { gte: new Date(sixtySecondsAgo) },
+            },
+            select: { id: true },
+        });
 
         if (existing) {
             console.log(`[BANK NOTIF] Duplicado detectado para ${packageName}, devolviendo existing id=${existing.id}`);
@@ -135,9 +136,8 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Auto-save to Pending table ──
-        const { data: pendingRecord } = await supabaseAdmin
-            .from('PendingNotification')
-            .insert({
+        const pendingRecord = await prisma.pendingNotification.create({
+            data: {
                 userId,
                 bankName: parsed.bankId,
                 merchant: effectiveMerchant,
@@ -147,7 +147,9 @@ export async function POST(req: NextRequest) {
                 tag: parsed.tag,
                 rawText: parsed.rawText,
                 transaction: preparedTransaction,
-            }).select('id').single();
+            },
+            select: { id: true },
+        });
 
         return NextResponse.json({
             parsed: { ...parsed, merchant: effectiveMerchant },
@@ -181,13 +183,12 @@ export async function GET(req: NextRequest) {
     const userId = await resolveUserId(auth.user.id);
     if (!userId) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
-    const { data: pending } = await supabaseAdmin
-        .from('PendingNotification')
-        .select('*')
-        .eq('userId', userId)
-        .order('createdAt', { ascending: false });
+    const pending = await prisma.pendingNotification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+    });
 
-    return NextResponse.json(pending ?? []);
+    return NextResponse.json(pending);
 }
 
 /**
@@ -218,7 +219,7 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 });
 
-    await supabaseAdmin.from('PendingNotification').delete().eq('id', id).eq('userId', userId);
+    await prisma.pendingNotification.deleteMany({ where: { id, userId } });
     return NextResponse.json({ ok: true });
 }
 
@@ -258,10 +259,10 @@ export async function PUT(req: NextRequest) {
             return NextResponse.json({ error: sanitized.error }, { status: 400 });
         }
 
-        const { data: saved } = await supabaseAdmin
-            .from('Transaction')
-            .insert({ ...sanitized.data, userId, id: Date.now().toString() })
-            .select('id').single();
+        const saved = await prisma.transaction.create({
+            data: { ...sanitized.data, userId, id: Date.now().toString() },
+            select: { id: true },
+        });
 
         return NextResponse.json({ ok: true, id: saved?.id });
     } catch (err: any) {

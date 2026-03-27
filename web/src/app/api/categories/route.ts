@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requireAuth, supabaseAdmin } from '../../../lib/supabase-server';
+import { requireAuth } from '../../../lib/supabase-server';
+import { prisma } from '../../../lib/prisma';
 import { consumeRateLimit, enforceSameOrigin, normalizeTagInput, normalizeText } from '../../../lib/security';
 
 async function resolveUserId(authId: string) {
-    const { data: user } = await supabaseAdmin
-        .from('User').select('id').eq('authId', authId).maybeSingle();
+    const user = await prisma.user.findUnique({ where: { authId }, select: { id: true } });
     return user?.id ?? null;
 }
 
@@ -37,12 +37,7 @@ export async function PUT(req: Request) {
         }
 
         const normalizedOldStr = normalizedOldTag;
-        const { data: userTxs, error: selectError } = await supabaseAdmin
-            .from('Transaction').select('id, tag').eq('userId', userId);
-        if (selectError) {
-            console.error('PUT select error:', selectError);
-            return NextResponse.json({ error: selectError.message ?? 'Error del servidor' }, { status: 500 });
-        }
+        const userTxs = await prisma.transaction.findMany({ where: { userId }, select: { id: true, tag: true } });
 
         const idsToUpdate = userTxs
             .filter(tx => normalizeTagInput(tx.tag) === normalizedOldStr)
@@ -50,16 +45,11 @@ export async function PUT(req: Request) {
 
         let count = 0;
         if (idsToUpdate.length > 0) {
-            const { data: updatedRows, error: updateError } = await supabaseAdmin
-                .from('Transaction')
-                .update({ tag: normalizedNewTag, icon: safeNewIcon })
-                .in('id', idsToUpdate)
-                .select('id');
-            if (updateError) {
-                console.error('PUT update error:', updateError);
-                return NextResponse.json({ error: updateError.message ?? 'Error del servidor' }, { status: 500 });
-            }
-            count = updatedRows?.length ?? 0;
+            const updated = await prisma.transaction.updateMany({
+                where: { id: { in: idsToUpdate } },
+                data: { tag: normalizedNewTag, icon: safeNewIcon },
+            });
+            count = updated.count;
         }
 
         return NextResponse.json({ success: true, count });
@@ -92,12 +82,7 @@ export async function DELETE(req: Request) {
 
     try {
         const normalizedOldStr = normalizeTagInput(oldTag);
-        const { data: userTxs, error: selectError } = await supabaseAdmin
-            .from('Transaction').select('id, tag').eq('userId', userId);
-        if (selectError) {
-            console.error('DELETE select error:', selectError);
-            return NextResponse.json({ error: selectError.message ?? 'Error del servidor' }, { status: 500 });
-        }
+        const userTxs = await prisma.transaction.findMany({ where: { userId }, select: { id: true, tag: true } });
 
         const idsToUpdate = userTxs
             .filter(tx => normalizeTagInput(tx.tag) === normalizedOldStr)
@@ -105,16 +90,11 @@ export async function DELETE(req: Request) {
 
         let count = 0;
         if (idsToUpdate.length > 0) {
-            const { data: updatedRows, error: updateError } = await supabaseAdmin
-                .from('Transaction')
-                .update({ tag: 'OTROS', icon: '\u2753' })
-                .in('id', idsToUpdate)
-                .select('id');
-            if (updateError) {
-                console.error('DELETE update error:', updateError);
-                return NextResponse.json({ error: updateError.message ?? 'Error del servidor' }, { status: 500 });
-            }
-            count = updatedRows?.length ?? 0;
+            const updated = await prisma.transaction.updateMany({
+                where: { id: { in: idsToUpdate } },
+                data: { tag: 'OTROS', icon: '\u2753' },
+            });
+            count = updated.count;
         }
 
         return NextResponse.json({ success: true, count });

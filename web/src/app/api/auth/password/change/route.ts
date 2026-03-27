@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { createSupabaseAdminClient, requireAuth } from '../../../../../lib/supabase-server';
+import { createSupabaseAuthClient, requireAuth, updateAuthenticatedSupabaseUser } from '../../../../../lib/supabase-server';
+import { prisma } from '../../../../../lib/prisma';
 import { consumeRateLimit, enforceSameOrigin, isSafePasswordCandidate } from '../../../../../lib/security';
 
 const toInternalEmail = (username: string) => `${username.toLowerCase().replace(/[^a-z0-9]/g, '_')}@gastosapp.internal`;
@@ -31,17 +32,10 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'weak_password' }, { status: 400 });
         }
 
-        const supabaseAdmin = createSupabaseAdminClient();
-        const { data: profile, error: profileError } = await supabaseAdmin
-            .from('User')
-            .select('id, username, password, authId')
-            .eq('authId', auth.user.id)
-            .maybeSingle();
-
-        if (profileError) {
-            console.error('[AUTH PASSWORD CHANGE] profile lookup error', profileError);
-            return NextResponse.json({ error: 'server_error' }, { status: 500 });
-        }
+        const profile = await prisma.user.findUnique({
+            where: { authId: auth.user.id },
+            select: { id: true, username: true, password: true, authId: true },
+        });
 
         if (!profile) {
             return NextResponse.json({ error: 'profile_not_found' }, { status: 404 });
@@ -49,13 +43,16 @@ export async function POST(req: Request) {
 
         const authEmail = auth.user.email || toInternalEmail(profile.username);
         let passwordValid = false;
+        let freshAccessToken = auth.accessToken;
 
         if (authEmail) {
-            const { error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+            const supabase = createSupabaseAuthClient();
+            const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
                 email: authEmail,
                 password: currentPassword,
             });
             passwordValid = !signInError;
+            freshAccessToken = signInData.session?.access_token ?? freshAccessToken;
         }
 
         if (!passwordValid && typeof profile.password === 'string') {
@@ -70,9 +67,8 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'invalid_current_password' }, { status: 401 });
         }
 
-        const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(auth.user.id, {
-            password: newPassword,
-        });
+        const updateToken = freshAccessToken ?? auth.accessToken ?? '';
+        const { error: updateAuthError } = await updateAuthenticatedSupabaseUser(updateToken, { password: newPassword });
 
         if (updateAuthError) {
             console.error('[AUTH PASSWORD CHANGE] update auth error', updateAuthError);
@@ -80,12 +76,12 @@ export async function POST(req: Request) {
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 12);
-        const { error: updateProfileError } = await supabaseAdmin
-            .from('User')
-            .update({ password: hashedPassword })
-            .eq('id', profile.id);
-
-        if (updateProfileError) {
+        try {
+            await prisma.user.update({
+                where: { id: profile.id },
+                data: { password: hashedPassword },
+            });
+        } catch (updateProfileError) {
             console.error('[AUTH PASSWORD CHANGE] update profile error', updateProfileError);
             return NextResponse.json({ error: 'update_profile_password_error' }, { status: 500 });
         }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin, requireAuth } from '../../../lib/supabase-server';
+import { createAuthenticatedSupabaseClient, requireAuth } from '../../../lib/supabase-server';
+import { prisma } from '../../../lib/prisma';
 import { consumeRateLimit, enforceSameOrigin, normalizeText } from '../../../lib/security';
 
 function normalizeBase64(value: unknown) {
@@ -10,15 +11,10 @@ function normalizeBase64(value: unknown) {
 }
 
 async function getAppUserByAuthId(authUserId: string) {
-  const { data: currentUser, error } = await supabaseAdmin
-    .from('User')
-    .select('id, authId, role, username')
-    .eq('authId', authUserId)
-    .maybeSingle();
-
-  if (error) {
-    return { error: error.message, status: 500, currentUser: null };
-  }
+  const currentUser = await prisma.user.findUnique({
+    where: { authId: authUserId },
+    select: { id: true, authId: true, role: true, username: true },
+  });
 
   if (!currentUser) {
     return { error: 'Usuario no encontrado', status: 404, currentUser: null };
@@ -41,7 +37,7 @@ async function requireAdminUser(authUserId: string) {
 }
 
 export async function GET(req: Request) {
-  const { user, error, status } = await requireAuth(req);
+  const { user, accessToken, error, status } = await requireAuth(req);
   if (!user) return NextResponse.json({ error }, { status });
 
   const adminCheck = await requireAdminUser(user.id);
@@ -49,13 +45,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: adminCheck.error }, { status: adminCheck.status });
   }
 
+  const supabase = createAuthenticatedSupabaseClient(accessToken ?? '');
+
   const url = new URL(req.url);
   const requestedLimit = Number(url.searchParams.get('limit') ?? '50');
   const limit = Number.isFinite(requestedLimit)
     ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 100)
     : 50;
 
-  const { data: reports, error: reportsError } = await supabaseAdmin
+  const { data: reports, error: reportsError } = await supabase
     .from('debug_reports')
     .select('id, user_id, description, device_info, app_version, platform, images_count, created_at')
     .order('created_at', { ascending: false })
@@ -70,18 +68,18 @@ export async function GET(req: Request) {
   let reporterNames = new Map<string, string>();
 
   if (reporterIds.length > 0) {
-    const { data: users, error: usersError } = await supabaseAdmin
-      .from('User')
-      .select('id, authId, username')
-      .or(reporterIds.map((reporterId) => `id.eq.${reporterId},authId.eq.${reporterId}`).join(','));
-
-    if (usersError) {
-      console.error('[DEBUG_REPORTS GET] user lookup error:', usersError);
-      return NextResponse.json({ error: usersError.message ?? 'No se pudieron cargar los usuarios' }, { status: 500 });
-    }
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { id: { in: reporterIds } },
+          { authId: { in: reporterIds } },
+        ],
+      },
+      select: { id: true, authId: true, username: true },
+    });
 
     reporterNames = new Map();
-    for (const row of users ?? []) {
+    for (const row of users) {
       if (row.id) reporterNames.set(row.id as string, row.username as string);
       if (row.authId) reporterNames.set(row.authId as string, row.username as string);
     }
@@ -105,7 +103,7 @@ export async function GET(req: Request) {
     }
 
     const allPaths = pathIndex.map((p) => p.path);
-    const { data: signedData } = await supabaseAdmin.storage
+    const { data: signedData } = await supabase.storage
       .from('debug-attachments')
       .createSignedUrls(allPaths, 3600);
 
@@ -141,13 +139,15 @@ export async function POST(req: Request) {
   });
   if (rateLimitError) return rateLimitError;
 
-  const { user, error, status } = await requireAuth(req);
+  const { user, accessToken, error, status } = await requireAuth(req);
   if (!user) return NextResponse.json({ error }, { status });
 
   const appUser = await getAppUserByAuthId(user.id);
   if (appUser.error || !appUser.currentUser) {
     return NextResponse.json({ error: appUser.error ?? 'Usuario no encontrado' }, { status: appUser.status });
   }
+
+  const supabase = createAuthenticatedSupabaseClient(accessToken ?? '');
 
   try {
     const body = await req.json();
@@ -161,7 +161,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Descripción requerida' }, { status: 400 });
     }
 
-    const { data: report, error: insertError } = await supabaseAdmin
+    const { data: report, error: insertError } = await supabase
       .from('debug_reports')
       .insert({
         user_id: appUser.currentUser.id,
@@ -185,8 +185,8 @@ export async function POST(req: Request) {
       if (!base64) continue;
 
       const bytes = Buffer.from(base64, 'base64');
-      const path = `${report.id}/${index}.jpg`;
-      const { error: uploadError } = await supabaseAdmin.storage
+      const path = `${appUser.currentUser.id}/${report.id}/${index}.jpg`;
+      const { error: uploadError } = await supabase.storage
         .from('debug-attachments')
         .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
 

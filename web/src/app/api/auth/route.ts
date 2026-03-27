@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { createSupabaseAdminClient, ensureAppUserProfile } from '../../../lib/supabase-server';
+import { createSupabaseAuthClient, ensureAppUserProfile } from '../../../lib/supabase-server';
 import bcrypt from 'bcryptjs';
+import { prisma } from '../../../lib/prisma';
 import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, isSafePasswordCandidate, normalizeEmail, normalizeUsername, USERNAME_REGEX } from '../../../lib/security';
 
 type AuthErrorCode =
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
         const originError = enforceSameOrigin(req);
         if (originError) return originError;
 
-        const supabaseAdmin = createSupabaseAdminClient();
+        const supabase = createSupabaseAuthClient();
         const { username, email, password, fullName, monthlyGoal, action } = await req.json();
         const rawLoginIdentifier = typeof username === 'string' && username.trim().length > 0
             ? username
@@ -95,43 +96,31 @@ export async function POST(req: Request) {
 
         if (action === 'register') {
             if (requestedUsername) {
-                const { data: existing, error: existingError } = await supabaseAdmin
-                    .from('User').select('id').eq('username', requestedUsername).maybeSingle();
-                if (existingError) {
-                    console.error('[AUTH REGISTER] PASO 0 - Error al consultar tabla User:', existingError);
-                    return errorResponse(500, 'server_error', `[PASO 0] ${existingError.message}`);
-                }
+                const existing = await prisma.user.findUnique({ where: { username: requestedUsername }, select: { id: true } });
                 if (existing) {
                     return errorResponse(400, 'user_exists');
                 }
             }
 
-            // PASO 1: Crear usuario en Supabase Auth
-            console.log('[AUTH REGISTER] PASO 1 - Creando usuario en Supabase Auth:', normalizedEmail);
-            const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+            const { data: authData, error: authError } = await supabase.auth.signUp({
                 email: normalizedEmail,
                 password,
-                email_confirm: true,
-                user_metadata: {
-                    full_name: typeof fullName === 'string' ? fullName.trim() : '',
-                    username: requestedUsername ?? usernameBase,
+                options: {
+                    data: {
+                        full_name: typeof fullName === 'string' ? fullName.trim() : '',
+                        username: requestedUsername ?? usernameBase,
+                    },
                 },
             });
 
             if (authError || !authData.user) {
-                console.error('[AUTH REGISTER] PASO 1 FALLÓ - authError:', authError);
                 const authMessage = authError?.message?.toLowerCase() ?? '';
                 if (authMessage.includes('already') || authMessage.includes('exists')) {
                     return errorResponse(400, 'email_exists');
                 }
-                return errorResponse(400, 'create_auth_error', `[PASO 1] ${authError?.message ?? 'Auth user creation failed'}`);
+                return errorResponse(400, 'create_auth_error', authError?.message ?? 'Auth user creation failed');
             }
-            console.log('[AUTH REGISTER] PASO 1 OK - auth.user.id:', authData.user.id);
 
-            // PASO 2: Crear perfil en tabla User
-            // NOTA: Se pasa el id explícitamente porque la columna en Supabase no tiene DEFAULT configurado.
-            // Esto ocurre cuando Prisma nunca corrió las migraciones contra la DB (que añade gen_random_uuid()).
-            console.log('[AUTH REGISTER] PASO 2 - Insertando perfil en tabla User...');
             const hashedPassword = await bcrypt.hash(password, 12);
             const newUserId = randomUUID();
             let newUser: { id: string; username: string; monthlyGoal: number } | null = null;
@@ -141,51 +130,47 @@ export async function POST(req: Request) {
                 const suffix = requestedUsername || attempt === 0 ? '' : `_${attempt + 1}`;
                 const nextUsername = `${usernameBase.slice(0, Math.max(3, 32 - suffix.length))}${suffix}`;
 
-                const result = await supabaseAdmin
-                    .from('User')
-                    .insert({ id: newUserId, username: nextUsername, password: hashedPassword, authId: authData.user.id, monthlyGoal: nextMonthlyGoal })
-                    .select('id, username, monthlyGoal')
-                    .single();
-
-                if (result.data) {
-                    newUser = result.data;
+                try {
+                    newUser = await prisma.user.create({
+                        data: {
+                            id: newUserId,
+                            username: nextUsername,
+                            password: hashedPassword,
+                            authId: authData.user.id,
+                            monthlyGoal: nextMonthlyGoal,
+                        },
+                        select: { id: true, username: true, monthlyGoal: true },
+                    });
                     createError = null;
                     break;
-                }
-
-                createError = result.error;
-                if (createError?.code !== '23505' || requestedUsername) {
-                    break;
+                } catch (error) {
+                    createError = {
+                        code: typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: string }).code ?? '') : undefined,
+                        message: error instanceof Error ? error.message : String(error),
+                    };
+                    if (createError.code !== 'P2002' || requestedUsername) {
+                        break;
+                    }
                 }
             }
 
             if (!newUser) {
-                console.error('[AUTH REGISTER] PASO 2 FALLÓ - createError:', createError);
-                await supabaseAdmin.auth.admin.deleteUser(authData.user.id).catch(() => { });
-                if (createError?.code === '23505' && requestedUsername) {
+                if (createError?.code === 'P2002' && requestedUsername) {
                     return errorResponse(400, 'user_exists');
                 }
-                return errorResponse(500, 'create_profile_error', `[PASO 2] ${createError?.message ?? 'User profile creation failed'}`);
+                return errorResponse(500, 'create_profile_error', createError?.message ?? 'User profile creation failed');
             }
-            console.log('[AUTH REGISTER] PASO 2 OK - newUser.id:', newUser.id);
 
-            // PASO 3: Sign-in para obtener el JWT real
-            console.log('[AUTH REGISTER] PASO 3 - signInWithPassword...');
-            const { data: signIn, error: signInError } = await supabaseAdmin.auth.signInWithPassword({
-                email: normalizedEmail,
-                password,
-            });
-
-            if (signInError) {
-                console.error('[AUTH REGISTER] PASO 3 FALLÓ (no crítico) - signInError:', signInError);
-            }
+            const signIn = authData.session
+                ? { session: authData.session }
+                : (await supabase.auth.signInWithPassword({ email: normalizedEmail, password })).data;
 
             return NextResponse.json({
                 id: newUser.id,
                 username: newUser.username,
                 monthlyGoal: newUser.monthlyGoal,
-                access_token: signIn?.session?.access_token ?? null,
-                refresh_token: signIn?.session?.refresh_token ?? null,
+                access_token: signIn.session?.access_token ?? null,
+                refresh_token: signIn.session?.refresh_token ?? null,
             });
         }
 
@@ -195,7 +180,7 @@ export async function POST(req: Request) {
 
             if (loginLooksLikeEmail) {
                 const loginEmail = normalizeEmail(normalizedLoginIdentifier);
-                const { data: signIn, error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+                const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
                     email: loginEmail,
                     password,
                 });
@@ -215,8 +200,10 @@ export async function POST(req: Request) {
                 });
             }
 
-            const { data: user } = await supabaseAdmin
-                .from('User').select('id, username, password, monthlyGoal, authId').eq('username', normalizedUsername).maybeSingle();
+            const user = await prisma.user.findUnique({
+                where: { username: normalizedUsername },
+                select: { id: true, username: true, password: true, monthlyGoal: true, authId: true },
+            });
 
             if (!user) {
                 return errorResponse(401, 'invalid_credentials');
@@ -224,30 +211,21 @@ export async function POST(req: Request) {
 
             let authEmail = internalEmail;
 
-            if (user.authId) {
-                const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(user.authId);
-                authEmail = authUserData?.user?.email || internalEmail;
-            }
-
             let passwordValid: boolean;
 
             if (user.authId) {
-                // Usuario con Supabase Auth — verificar contraseña directamente contra Supabase.
-                // Esto cubre casos donde el campo password es un placeholder (ej: creado via script).
-                const { error: signInCheckError } = await supabaseAdmin.auth.signInWithPassword({
+                const { error: signInCheckError } = await supabase.auth.signInWithPassword({
                     email: authEmail,
                     password,
                 });
                 passwordValid = !signInCheckError;
             } else if (user.password.startsWith('$2')) {
-                // Usuario con hash bcrypt (registrado via app)
                 passwordValid = await bcrypt.compare(password, user.password);
             } else {
-                // Usuario legacy con contraseña en texto plano — verificar y migrar
                 passwordValid = user.password === password;
                 if (passwordValid) {
                     const hashed = await bcrypt.hash(password, 12);
-                    await supabaseAdmin.from('User').update({ password: hashed }).eq('id', user.id);
+                    await prisma.user.update({ where: { id: user.id }, data: { password: hashed } });
                 }
             }
 
@@ -255,26 +233,22 @@ export async function POST(req: Request) {
                 return errorResponse(401, 'invalid_credentials');
             }
 
-            // Si no tiene authId aún (usuario legacy con password válido), crearlo en Supabase
             if (!user.authId) {
-                const { data: authData } = await supabaseAdmin.auth.admin.createUser({
+                const { data: authData } = await supabase.auth.signUp({
                     email: internalEmail,
                     password,
-                    email_confirm: true,
                 });
                 if (authData?.user) {
-                    await supabaseAdmin.from('User').update({ authId: authData.user.id }).eq('id', user.id);
+                    await prisma.user.update({ where: { id: user.id }, data: { authId: authData.user.id } });
                 }
             }
 
-            // Obtener JWT real de Supabase
-            const { data: signIn, error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+            const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
                 email: authEmail,
                 password,
             });
 
             if (signInError || !signIn?.session) {
-                // Fallback: si Supabase falla, aún retornamos datos básicos (temporal)
                 console.error('Supabase signIn error:', signInError);
                 return NextResponse.json({ id: user.id, username: user.username, monthlyGoal: user.monthlyGoal });
             }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseAdminClient } from '../../../../lib/supabase-server';
+import { createSupabaseAuthClient } from '../../../../lib/supabase-server';
 import { consumeRateLimit, enforceSameOrigin } from '../../../../lib/security';
 
 export async function POST(req: Request) {
@@ -20,11 +20,11 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Missing refresh token' }, { status: 400 });
         }
 
-        const supabaseAdmin = createSupabaseAdminClient();
+        const supabase = createSupabaseAuthClient();
         const {
             data: { session },
             error,
-        } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+        } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
 
         if (error || !session) {
             return NextResponse.json({ error: error?.message ?? 'Unable to refresh session' }, { status: 401 });

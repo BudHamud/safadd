@@ -1,18 +1,25 @@
 import { randomUUID } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import { prisma } from './prisma';
 import { getRequiredServerEnv } from './security';
 
 const supabaseUrl = getRequiredServerEnv('NEXT_PUBLIC_SUPABASE_URL');
-const supabaseServiceKey = getRequiredServerEnv('SUPABASE_SERVICE_ROLE_KEY');
+const supabaseAnonKey = getRequiredServerEnv('SUPABASE_ANON_KEY');
+const authUserEndpoint = new URL('/auth/v1/user', supabaseUrl).toString();
+const authSignOutEndpoint = new URL('/auth/v1/logout?scope=global', supabaseUrl).toString();
 
-// Service role client — bypasea RLS, solo usar en server-side.
-// Se expone también como factory para evitar reutilizar una sesión mutada entre requests.
-export const createSupabaseAdminClient = () => createClient(supabaseUrl, supabaseServiceKey, {
+export const createSupabaseAuthClient = () => createClient(supabaseUrl, supabaseAnonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
 });
 
-// Cliente compartido para rutas que solo hacen operaciones admin/read-only.
-export const supabaseAdmin = createSupabaseAdminClient();
+export const createAuthenticatedSupabaseClient = (accessToken: string) => createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+    global: {
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+        },
+    },
+});
 
 function buildUsernameBase(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null }) {
     const metadata = user.user_metadata ?? {};
@@ -33,18 +40,20 @@ function buildUsernameBase(user: { id: string; email?: string | null; user_metad
 }
 
 export async function ensureAppUserProfile(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null }) {
-    const existingProfileQuery = await supabaseAdmin
-        .from('User')
-        .select('id, username, role, monthlyGoal, createdAt, authId')
-        .eq('authId', user.id)
-        .maybeSingle();
+    const existingProfile = await prisma.user.findUnique({
+        where: { authId: user.id },
+        select: {
+            id: true,
+            username: true,
+            role: true,
+            monthlyGoal: true,
+            createdAt: true,
+            authId: true,
+        },
+    });
 
-    if (existingProfileQuery.data) {
-        return existingProfileQuery.data;
-    }
-
-    if (existingProfileQuery.error) {
-        throw existingProfileQuery.error;
+    if (existingProfile) {
+        return existingProfile;
     }
 
     const baseUsername = buildUsernameBase(user);
@@ -54,39 +63,91 @@ export async function ensureAppUserProfile(user: { id: string; email?: string | 
         const suffix = attempt === 0 ? '' : `_${user.id.replace(/-/g, '').slice(0, attempt + 3)}`;
         const username = `${baseUsername.slice(0, Math.max(3, 32 - suffix.length))}${suffix}`;
 
-        const { data: insertedProfile, error: insertError } = await supabaseAdmin
-            .from('User')
-            .insert({
-                id: randomUUID(),
-                username,
-                password: passwordPlaceholder,
-                authId: user.id,
-                monthlyGoal: 0,
-            })
-            .select('id, username, role, monthlyGoal, createdAt, authId')
-            .single();
+        try {
+            return await prisma.user.create({
+                data: {
+                    id: randomUUID(),
+                    username,
+                    password: passwordPlaceholder,
+                    authId: user.id,
+                    monthlyGoal: 0,
+                },
+                select: {
+                    id: true,
+                    username: true,
+                    role: true,
+                    monthlyGoal: true,
+                    createdAt: true,
+                    authId: true,
+                },
+            });
+        } catch (error) {
+            const racedProfile = await prisma.user.findUnique({
+                where: { authId: user.id },
+                select: {
+                    id: true,
+                    username: true,
+                    role: true,
+                    monthlyGoal: true,
+                    createdAt: true,
+                    authId: true,
+                },
+            });
 
-        if (insertedProfile) {
-            return insertedProfile;
-        }
+            if (racedProfile) {
+                return racedProfile;
+            }
 
-        const racedProfileQuery = await supabaseAdmin
-            .from('User')
-            .select('id, username, role, monthlyGoal, createdAt, authId')
-            .eq('authId', user.id)
-            .maybeSingle();
+            const errorCode = typeof error === 'object' && error !== null && 'code' in error
+                ? String((error as { code?: string }).code ?? '')
+                : '';
 
-        if (racedProfileQuery.data) {
-            return racedProfileQuery.data;
-        }
-
-        const errorCode = insertError?.code ?? '';
-        if (errorCode !== '23505') {
-            throw insertError;
+            if (errorCode !== 'P2002') {
+                throw error;
+            }
         }
     }
 
     throw new Error('user_profile_provision_failed');
+}
+
+export async function updateAuthenticatedSupabaseUser(accessToken: string, attributes: Record<string, unknown>) {
+    const response = await fetch(authUserEndpoint, {
+        method: 'PUT',
+        headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(attributes),
+    });
+
+    const payload = await response.json().catch(() => null);
+    return {
+        data: payload,
+        status: response.status,
+        error: response.ok ? null : new Error(
+            typeof payload?.msg === 'string'
+                ? payload.msg
+                : typeof payload?.error_description === 'string'
+                    ? payload.error_description
+                    : typeof payload?.error === 'string'
+                        ? payload.error
+                        : 'Supabase auth update failed'
+        ),
+    };
+}
+
+export async function signOutAuthenticatedSupabaseUser(accessToken: string) {
+    const response = await fetch(authSignOutEndpoint, {
+        method: 'POST',
+        headers: {
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${accessToken}`,
+        },
+    });
+
+    return response.ok;
 }
 
 // Verifica el JWT del usuario y retorna el user autenticado
@@ -96,14 +157,21 @@ export async function requireAuth(req: Request) {
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
     if (!token) {
-        return { user: null, error: 'No autorizado: falta token', status: 401 };
+        return { user: null, accessToken: null, supabase: null, error: 'No autorizado: falta token', status: 401 };
     }
 
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    const supabase = createSupabaseAuthClient();
+    const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (error || !user) {
-        return { user: null, error: 'Token inválido o expirado', status: 401 };
+        return { user: null, accessToken: null, supabase: null, error: 'Token inválido o expirado', status: 401 };
     }
 
-    return { user, error: null, status: 200 };
+    return {
+        user,
+        accessToken: token,
+        supabase: createAuthenticatedSupabaseClient(token),
+        error: null,
+        status: 200,
+    };
 }

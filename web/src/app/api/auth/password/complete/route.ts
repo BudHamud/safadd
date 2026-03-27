@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { createSupabaseAdminClient } from '../../../../../lib/supabase-server';
+import { createSupabaseAuthClient, updateAuthenticatedSupabaseUser } from '../../../../../lib/supabase-server';
+import { prisma } from '../../../../../lib/prisma';
 import { consumeRateLimit, enforceSameOrigin, isSafePasswordCandidate } from '../../../../../lib/security';
 
 export async function POST(req: Request) {
@@ -24,19 +25,17 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'weak_password' }, { status: 400 });
         }
 
-        const supabaseAdmin = createSupabaseAdminClient();
+        const supabase = createSupabaseAuthClient();
         const {
             data: { user },
             error: getUserError,
-        } = await supabaseAdmin.auth.getUser(accessToken);
+        } = await supabase.auth.getUser(accessToken);
 
         if (getUserError || !user) {
             return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
         }
 
-        const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-            password,
-        });
+        const { error: updateAuthError } = await updateAuthenticatedSupabaseUser(accessToken, { password });
 
         if (updateAuthError) {
             console.error('[AUTH PASSWORD COMPLETE] update auth error', updateAuthError);
@@ -44,12 +43,12 @@ export async function POST(req: Request) {
         }
 
         const hashedPassword = await bcrypt.hash(password, 12);
-        const { error: updateProfileError } = await supabaseAdmin
-            .from('User')
-            .update({ password: hashedPassword })
-            .eq('authId', user.id);
-
-        if (updateProfileError) {
+        try {
+            await prisma.user.update({
+                where: { authId: user.id },
+                data: { password: hashedPassword },
+            });
+        } catch (updateProfileError) {
             console.error('[AUTH PASSWORD COMPLETE] update profile error', updateProfileError);
             return NextResponse.json({ error: 'update_profile_password_error' }, { status: 500 });
         }

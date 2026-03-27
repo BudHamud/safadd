@@ -40,7 +40,7 @@ Create a `.env` file at the project root:
 ```env
 DATABASE_URL="postgresql://user:password@host:port/dbname"
 NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
+SUPABASE_ANON_KEY="your-supabase-anon-key"
 
 # Optional
 DIRECT_URL="postgresql://user:password@host:port/dbname"
@@ -51,7 +51,7 @@ GROQ_API_KEY="your-groq-api-key"
 
 - `DATABASE_URL`: primary Prisma connection string
 - `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
-- `SUPABASE_SERVICE_ROLE_KEY`: server-side key for protected backend flows
+- `SUPABASE_ANON_KEY`: public key used together with the authenticated user's JWT and RLS policies
 
 ### Optional
 

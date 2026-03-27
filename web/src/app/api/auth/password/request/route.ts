@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseAdminClient } from '../../../../../lib/supabase-server';
+import { createSupabaseAuthClient } from '../../../../../lib/supabase-server';
 import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, normalizeEmail } from '../../../../../lib/security';
 
 export async function POST(req: Request) {
@@ -25,9 +25,9 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'invalid_email' }, { status: 400 });
         }
 
-        const supabaseAdmin = createSupabaseAdminClient();
+        const supabase = createSupabaseAuthClient();
         const redirectTo = `${new URL(req.url).origin}/reset-password`;
-        const { error } = await supabaseAdmin.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
+        const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
 
         if (error) {
             console.error('[AUTH PASSWORD REQUEST]', error);
