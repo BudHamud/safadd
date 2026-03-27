@@ -40,6 +40,21 @@ function buildUsernameBase(username: unknown, fullName: unknown, email: string) 
     return `user_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 
+async function getAuthEmailById(authId: string | null | undefined) {
+    if (!authId) {
+        return null;
+    }
+
+    const rows = await prisma.$queryRaw<Array<{ email: string | null }>>`
+        select email::text
+        from auth.users
+        where id = ${authId}::uuid
+        limit 1
+    `;
+
+    return rows[0]?.email ?? null;
+}
+
 export async function POST(req: Request) {
     try {
         const originError = enforceSameOrigin(req);
@@ -209,17 +224,9 @@ export async function POST(req: Request) {
                 return errorResponse(401, 'invalid_credentials');
             }
 
-            let authEmail = internalEmail;
-
             let passwordValid: boolean;
 
-            if (user.authId) {
-                const { error: signInCheckError } = await supabase.auth.signInWithPassword({
-                    email: authEmail,
-                    password,
-                });
-                passwordValid = !signInCheckError;
-            } else if (user.password.startsWith('$2')) {
+            if (user.password.startsWith('$2')) {
                 passwordValid = await bcrypt.compare(password, user.password);
             } else {
                 passwordValid = user.password === password;
@@ -233,6 +240,12 @@ export async function POST(req: Request) {
                 return errorResponse(401, 'invalid_credentials');
             }
 
+            let authEmail = internalEmail;
+
+            if (user.authId) {
+                authEmail = (await getAuthEmailById(user.authId)) ?? internalEmail;
+            }
+
             if (!user.authId) {
                 const { data: authData } = await supabase.auth.signUp({
                     email: internalEmail,
@@ -240,6 +253,7 @@ export async function POST(req: Request) {
                 });
                 if (authData?.user) {
                     await prisma.user.update({ where: { id: user.id }, data: { authId: authData.user.id } });
+                    authEmail = internalEmail;
                 }
             }
 

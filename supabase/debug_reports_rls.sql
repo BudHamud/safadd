@@ -5,6 +5,7 @@ alter table public.debug_reports enable row level security;
 
 drop policy if exists "user can insert own report" on public.debug_reports;
 drop policy if exists "allow insert debug report" on public.debug_reports;
+drop policy if exists "users insert own debug reports" on public.debug_reports;
 drop policy if exists "users read own debug reports" on public.debug_reports;
 drop policy if exists "service role reads reports" on public.debug_reports;
 drop policy if exists "admins read reports" on public.debug_reports;
@@ -17,7 +18,7 @@ with check (
 	exists (
 		select 1
 		from public."User" as profile
-		where profile.id = debug_reports.user_id
+		where profile.id::text = debug_reports.user_id::text
 			and profile."authId" = auth.uid()::text
 	)
 );
@@ -30,7 +31,7 @@ using (
 	exists (
 		select 1
 		from public."User" as profile
-		where profile.id = debug_reports.user_id
+		where profile.id::text = debug_reports.user_id::text
 			and profile."authId" = auth.uid()::text
 	)
 );
@@ -61,7 +62,7 @@ with check (
 	and exists (
 	  select 1
 	  from public."User" as profile
-	  where profile.id = (storage.foldername(name))[1]
+	  where profile.id::text = (storage.foldername(name))[1]
 	    and profile."authId" = auth.uid()::text
 	)
 );
@@ -75,7 +76,7 @@ using (
 	and exists (
 	  select 1
 	  from public."User" as profile
-	  where profile.id = (storage.foldername(name))[1]
+	  where profile.id::text = (storage.foldername(name))[1]
 	    and profile."authId" = auth.uid()::text
 	)
 );
