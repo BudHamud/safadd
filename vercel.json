@@ -1,6 +1,4 @@
 {
-  "installCommand": "pnpm install --filter gastos-app...",
-  "buildCommand": "pnpm --dir web exec prisma generate && pnpm --dir web build",
-  "outputDirectory": "web/.next",
-  "framework": "nextjs"
+  "version": 2,
+  "comment": "Vercel project: set Root Directory to 'web' in dashboard. Config lives in web/vercel.json."
 }
