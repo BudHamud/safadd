@@ -1,5 +1,5 @@
 {
-  "installCommand": "pnpm install --filter ./web... --frozen-lockfile --prefer-offline --ignore-scripts --reporter=append-only",
+  "installCommand": "pnpm install --filter gastos-app...",
   "buildCommand": "pnpm --dir web exec prisma generate && pnpm --dir web build",
   "outputDirectory": "web/.next",
   "framework": "nextjs"
