@@ -51,7 +51,7 @@ export async function DELETE(req: Request) {
     const originError = enforceSameOrigin(req);
     if (originError) return originError;
 
-    const { user, error, status } = await requireAuth(req);
+    const { user, accessToken, error, status } = await requireAuth(req);
     if (!user) return NextResponse.json({ error }, { status });
 
     try {
@@ -71,8 +71,8 @@ export async function DELETE(req: Request) {
             prisma.user.delete({ where: { id: profile.id } }),
         ]);
 
-        if (auth.accessToken) {
-            await signOutAuthenticatedSupabaseUser(auth.accessToken);
+        if (accessToken) {
+            await signOutAuthenticatedSupabaseUser(accessToken);
         }
 
         return NextResponse.json({ success: true, authDeleted: false });

@@ -259,8 +259,30 @@ export async function PUT(req: NextRequest) {
             return NextResponse.json({ error: sanitized.error }, { status: 400 });
         }
 
+        const sanitizedData = sanitized.data;
+
         const saved = await prisma.transaction.create({
-            data: { ...sanitized.data, userId, id: Date.now().toString() },
+            data: {
+                id: Date.now().toString(),
+                desc: sanitizedData.desc ?? 'Sin titulo',
+                amount: sanitizedData.amount ?? 0,
+                amountUSD: sanitizedData.amountUSD ?? null,
+                amountARS: sanitizedData.amountARS ?? null,
+                amountILS: sanitizedData.amountILS ?? null,
+                amountEUR: sanitizedData.amountEUR ?? null,
+                tag: sanitizedData.tag ?? 'OTROS',
+                type: sanitizedData.type ?? 'expense',
+                date: sanitizedData.date ?? new Date().toISOString().split('T')[0],
+                icon: sanitizedData.icon ?? '💳',
+                details: sanitizedData.details ?? '',
+                excludeFromBudget: sanitizedData.excludeFromBudget ?? false,
+                goalType: sanitizedData.goalType ?? 'unico',
+                isCancelled: sanitizedData.isCancelled ?? false,
+                periodicity: sanitizedData.periodicity ?? null,
+                paymentMethod: sanitizedData.paymentMethod ?? null,
+                cardDigits: sanitizedData.cardDigits ?? null,
+                user: { connect: { id: userId } },
+            },
             select: { id: true },
         });
 

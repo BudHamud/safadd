@@ -80,11 +80,31 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: sanitized.error }, { status: 400 });
         }
 
-        const tx = await prisma.transaction.create({ data: {
-            id: randomUUID(),
-            ...sanitized.data,
-            userId,
-        } });
+        const sanitizedData = sanitized.data;
+
+        const tx = await prisma.transaction.create({
+            data: {
+                id: randomUUID(),
+                userId,
+                desc: sanitizedData.desc ?? 'Sin titulo',
+                amount: sanitizedData.amount ?? 0,
+                amountUSD: sanitizedData.amountUSD ?? null,
+                amountARS: sanitizedData.amountARS ?? null,
+                amountILS: sanitizedData.amountILS ?? null,
+                amountEUR: sanitizedData.amountEUR ?? null,
+                tag: sanitizedData.tag ?? 'OTROS',
+                type: sanitizedData.type ?? 'expense',
+                date: sanitizedData.date ?? new Date().toISOString().split('T')[0],
+                icon: sanitizedData.icon ?? '💳',
+                details: sanitizedData.details ?? '',
+                excludeFromBudget: sanitizedData.excludeFromBudget ?? false,
+                goalType: sanitizedData.goalType ?? 'unico',
+                isCancelled: sanitizedData.isCancelled ?? false,
+                periodicity: sanitizedData.periodicity ?? null,
+                paymentMethod: sanitizedData.paymentMethod ?? null,
+                cardDigits: sanitizedData.cardDigits ?? null,
+            },
+        });
         return NextResponse.json(tx);
     } catch (err) {
         console.error(err);
