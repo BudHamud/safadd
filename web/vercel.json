@@ -1,5 +1,5 @@
 {
-  "installCommand": "pnpm i",
+  "installCommand": "cd .. && pnpm install --filter ./web... --no-frozen-lockfile",
   "buildCommand": "pnpm build",
   "outputDirectory": ".next",
   "framework": "nextjs"
