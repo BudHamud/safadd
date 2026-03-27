@@ -1,6 +1,7 @@
 {
   "name": "safadd",
   "private": true,
+  "packageManager": "pnpm@9.15.4",
   "workspaces": [
     "web",
     "mobile",
