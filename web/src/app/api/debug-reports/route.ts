@@ -87,10 +87,45 @@ export async function GET(req: Request) {
     }
   }
 
+  // Generate signed URLs for all images in a single batch call.
+  // Mobile uploads use path: {user_id}/{report_id}/{index}.jpg
+  const reportsWithImages = (reports ?? []).filter((r) => (r.images_count ?? 0) > 0);
+  const signedUrlMap = new Map<string, string[]>();
+
+  if (reportsWithImages.length > 0) {
+    const pathIndex: { reportId: string; pathIdx: number; path: string }[] = [];
+    for (const report of reportsWithImages) {
+      for (let i = 0; i < (report.images_count ?? 0); i++) {
+        pathIndex.push({
+          reportId: report.id,
+          pathIdx: i,
+          path: `${report.user_id}/${report.id}/${i}.jpg`,
+        });
+      }
+    }
+
+    const allPaths = pathIndex.map((p) => p.path);
+    const { data: signedData } = await supabaseAdmin.storage
+      .from('debug-attachments')
+      .createSignedUrls(allPaths, 3600);
+
+    if (signedData) {
+      for (let i = 0; i < pathIndex.length; i++) {
+        const entry = pathIndex[i];
+        const signed = signedData[i];
+        if (!entry || !signed?.signedUrl) continue;
+        const bucket = signedUrlMap.get(entry.reportId) ?? [];
+        bucket[entry.pathIdx] = signed.signedUrl;
+        signedUrlMap.set(entry.reportId, bucket);
+      }
+    }
+  }
+
   return NextResponse.json({
     reports: (reports ?? []).map((report) => ({
       ...report,
       reporterName: reporterNames.get(report.user_id) ?? null,
+      image_urls: signedUrlMap.get(report.id) ?? [],
     })),
   });
 }

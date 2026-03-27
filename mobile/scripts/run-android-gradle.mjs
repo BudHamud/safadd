@@ -53,7 +53,13 @@ function syncGoogleServicesFile() {
 
 function runGradle(tasks) {
   const wrapper = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
-  const args = process.platform === 'win32' ? tasks : tasks;
+
+  // For release/bundle tasks only build device ABIs (arm64-v8a, armeabi-v7a).
+  // x86/x86_64 are emulator-only and cause OOM during parallel CMake native builds.
+  const isRelease = tasks.some((t) => /release|bundle/i.test(t));
+  const extraArgs = isRelease ? ['-PreactNativeArchitectures=arm64-v8a,armeabi-v7a'] : [];
+
+  const args = [...tasks, ...extraArgs];
   const child = spawn(wrapper, args, {
     cwd: androidDir,
     stdio: 'inherit',

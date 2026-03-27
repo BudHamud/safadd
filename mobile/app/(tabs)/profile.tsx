@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Modal,
@@ -23,6 +23,7 @@ import { haptic } from '../../utils/haptics';
 import { formatAmount } from '../../lib/locale';
 import { getCurrencySymbol } from '../../lib/currency';
 import { useDialog } from '../../context/DialogContext';
+import { getSyncMode, getPendingCount, type SyncMode } from '../../lib/offlineQueue';
 import { ModalSafeAreaView } from '../../components/layout/ModalSafeAreaView';
 
 type Section = 'identity' | 'goal' | 'theme' | 'categories' | 'notifications' | 'sync' | 'debug' | null;
@@ -36,6 +37,21 @@ export default function ProfileScreen() {
   const [isCurrencyModalOpen, setIsCurrencyModalOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const { categories, stats, syncPendingTransactions } = useDashboardData(webUser?.id ?? null, currency);
+
+  const [syncMode, setSyncModeState] = useState<SyncMode>('auto');
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      const [mode, count] = await Promise.all([getSyncMode(), getPendingCount()]);
+      if (!mounted) return;
+      setSyncModeState(mode);
+      setPendingCount(count);
+    };
+    void load();
+    return () => { mounted = false; };
+  }, [activeSection]);
 
   const displayName = (webUser?.username ?? profile?.full_name ?? user?.email ?? t('profile.title')).toUpperCase();
   const initials = displayName.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2);
@@ -253,8 +269,12 @@ export default function ProfileScreen() {
         <RowItem
           iconChar="↺"
           label={t('profile.sync_title')}
-          value={`✓ ${t('profile.sync_none')}`}
-          valueColor={C.primary}
+          value={pendingCount > 0
+            ? `${pendingCount} ${t('profile.sync_pending')}`
+            : syncMode === 'manual'
+              ? `⏸ ${t('profile.sync_mode_manual')}`
+              : `✓ ${t('profile.sync_none')}`}
+          valueColor={pendingCount > 0 ? C.accent : C.primary}
           onPress={() => { haptic.selection(); setActiveSection('sync'); }}
           C={C}
         />

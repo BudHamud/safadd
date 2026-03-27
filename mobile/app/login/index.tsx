@@ -12,12 +12,14 @@ import { useDialog } from '../../context/DialogContext';
 import { useTheme } from '../../context/ThemeContext';
 import { apiFetch } from '../../lib/api';
 import { AnimatedLogoMark } from '../../components/branding/AnimatedLogoMark';
+import Constants from 'expo-constants';
 
 type Mode = 'login' | 'register' | 'recovery';
 
 export default function LoginScreen() {
   const { signIn, signUp } = useAuth();
   const { t } = useLanguage();
+  const appVersion = Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? '1.1.0';
   const { theme: C } = useTheme();
   const dialog = useDialog();
   const [mode, setMode] = useState<Mode>('login');
@@ -324,7 +326,7 @@ export default function LoginScreen() {
 
             {/* ── Footer ── */}
             <View style={[styles.authFooter, { borderTopColor: C.borderDim }]}>
-              <Text style={[styles.authFooterVersion, { color: C.textMuted }]}>© SAFADD V1.0.14</Text>
+              <Text style={[styles.authFooterVersion, { color: C.textMuted }]}>{`© SAFADD V${appVersion.toUpperCase()}`}</Text>
               <View style={styles.authFooterIcons}>
                 <Svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2">
                   <Rect x="3" y="11" width="18" height="11" rx="2" /><Path d="M7 11V7a5 5 0 0 1 10 0v4" />

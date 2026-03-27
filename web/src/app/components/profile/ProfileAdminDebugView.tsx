@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useAppContext } from '../../../context/AppContext';
 import { useLanguage } from '../../../context/LanguageContext';
-
 type AdminDebugReport = {
     id: string;
     description: string;
@@ -11,6 +10,7 @@ type AdminDebugReport = {
     images_count: number | null;
     created_at: string;
     reporterName: string | null;
+    image_urls: string[];
 };
 
 export const ProfileAdminDebugView = () => {
@@ -87,6 +87,17 @@ export const ProfileAdminDebugView = () => {
                         </div>
 
                         <p className="profile-admin-report-desc">{report.description}</p>
+
+                        {report.image_urls.length > 0 && (
+                            <div className="profile-admin-report-images">
+                                {report.image_urls.map((url, i) => (
+                                    <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="profile-admin-report-img-wrap">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={url} alt={`Screenshot ${i + 1}`} className="profile-admin-report-img" />
+                                    </a>
+                                ))}
+                            </div>
+                        )}
 
                         <div className="profile-admin-report-grid">
                             <div>

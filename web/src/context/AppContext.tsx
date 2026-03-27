@@ -95,7 +95,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     useEffect(() => {
         if (!auth.userId) return;
         txs.loadUserTransactions(auth.userId, auth.accessToken);
-    }, [auth.accessToken, auth.userId, txs.loadUserTransactions]);
+        // Intentionally keyed to auth state only to avoid refetch loops caused by callback identity churn.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [auth.accessToken, auth.userId]);
 
     // Llamar loadUserData en auth (incluye carga de transacciones + datos de usuario)
     const loadUserData = (uid: string, token?: string | null) => {

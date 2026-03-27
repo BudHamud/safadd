@@ -44,9 +44,13 @@ function normalizeBase64(value: string | null) {
   return trimmed.replace(/^data:[^;]+;base64,/, '');
 }
 
-async function base64ToArrayBuffer(base64: string, mimeType: string) {
-  const response = await fetch(`data:${mimeType};base64,${base64}`);
-  return response.arrayBuffer();
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer as ArrayBuffer;
 }
 
 function serializeDebugError(error: any, extra: Record<string, unknown> = {}) {
@@ -217,13 +221,16 @@ export function ProfileDebugView({ onClose }: Props) {
         const normalizedBase64 = normalizeBase64(images[index]?.base64 ?? null);
         if (!normalizedBase64) continue;
 
-        const bytes = await base64ToArrayBuffer(normalizedBase64, 'image/jpeg');
+        const bytes = base64ToArrayBuffer(normalizedBase64);
         const path = `${user.id}/${report.id}/${index}.jpg`;
         const { error: uploadError } = await supabase.storage
           .from('debug-attachments')
           .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
 
         if (uploadError) {
+          // Rollback: delete the already-inserted report so admin doesn't see
+          // a partial entry and the user can retry with all images.
+          await supabase.from('debug_reports').delete().eq('id', report.id);
           throw uploadError;
         }
       }

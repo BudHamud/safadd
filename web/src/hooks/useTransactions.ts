@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import React from "react";
 import { Transaction, Category } from "../types";
 import { normalizeTag } from "@safed/shared/category";
@@ -30,7 +30,7 @@ export function useTransactions(
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [addModalInitialData, setAddModalInitialData] = useState<Partial<Transaction> | null>(null);
 
-    const loadUserTransactions = async (uid: string, token?: string | null) => {
+    const loadUserTransactions = useCallback(async (uid: string, token?: string | null) => {
         setIsLoadingTransactions(true);
         try {
             const res = await authenticatedFetch('/api/transactions', {}, token);
@@ -49,7 +49,7 @@ export function useTransactions(
         } finally {
             setIsLoadingTransactions(false);
         }
-    };
+    }, [authenticatedFetch]);
 
     const saveTransaction = async (newTx: Transaction) => {
         if (!userId) return;

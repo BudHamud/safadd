@@ -1542,6 +1542,32 @@
     word-break: break-word;
 }
 
+.profile-admin-report-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.profile-admin-report-img-wrap {
+    display: block;
+    flex: 0 0 auto;
+    border: 1px solid var(--p-border);
+    overflow: hidden;
+    border-radius: 2px;
+}
+
+.profile-admin-report-img {
+    display: block;
+    width: 120px;
+    height: 120px;
+    object-fit: cover;
+    transition: opacity 0.15s;
+}
+
+.profile-admin-report-img:hover {
+    opacity: 0.85;
+}
+
 @media (max-width: 640px) {
     .profile-admin-report-grid {
         grid-template-columns: 1fr;
