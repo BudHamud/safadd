@@ -7,6 +7,7 @@ const supabaseUrl = getRequiredServerEnv('NEXT_PUBLIC_SUPABASE_URL');
 const supabaseAnonKey = getRequiredServerEnv('SUPABASE_ANON_KEY');
 const authUserEndpoint = new URL('/auth/v1/user', supabaseUrl).toString();
 const authSignOutEndpoint = new URL('/auth/v1/logout?scope=global', supabaseUrl).toString();
+const appUserProfileSelect = 'id,username,role,monthlyGoal,createdAt,authId';
 
 export const createSupabaseAuthClient = () => createClient(supabaseUrl, supabaseAnonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -37,6 +38,62 @@ function buildUsernameBase(user: { id: string; email?: string | null; user_metad
     }
 
     return `user_${user.id.replace(/-/g, '').slice(0, 12)}`;
+}
+
+export async function ensureAppUserProfileWithSupabase(accessToken: string, user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null }) {
+    const supabase = createAuthenticatedSupabaseClient(accessToken);
+    const existingProfile = await supabase
+        .from('User')
+        .select(appUserProfileSelect)
+        .eq('authId', user.id)
+        .maybeSingle();
+
+    if (existingProfile.error) {
+        throw existingProfile.error;
+    }
+
+    if (existingProfile.data) {
+        return existingProfile.data;
+    }
+
+    const baseUsername = buildUsernameBase(user);
+    const passwordPlaceholder = `!auth-managed!${randomUUID()}`;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const suffix = attempt === 0 ? '' : `_${user.id.replace(/-/g, '').slice(0, attempt + 3)}`;
+        const username = `${baseUsername.slice(0, Math.max(3, 32 - suffix.length))}${suffix}`;
+        const insertedProfile = await supabase
+            .from('User')
+            .insert({
+                id: randomUUID(),
+                username,
+                password: passwordPlaceholder,
+                authId: user.id,
+                monthlyGoal: 0,
+            })
+            .select(appUserProfileSelect)
+            .single();
+
+        if (!insertedProfile.error && insertedProfile.data) {
+            return insertedProfile.data;
+        }
+
+        const racedProfile = await supabase
+            .from('User')
+            .select(appUserProfileSelect)
+            .eq('authId', user.id)
+            .maybeSingle();
+
+        if (racedProfile.error) {
+            throw racedProfile.error;
+        }
+
+        if (racedProfile.data) {
+            return racedProfile.data;
+        }
+    }
+
+    throw new Error('user_profile_provision_failed');
 }
 
 export async function ensureAppUserProfile(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null }) {

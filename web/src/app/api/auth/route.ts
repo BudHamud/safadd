@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { createSupabaseAuthClient, ensureAppUserProfile } from '../../../lib/supabase-server';
+import { createSupabaseAuthClient, ensureAppUserProfileWithSupabase } from '../../../lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../../lib/prisma';
 import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, isSafePasswordCandidate, normalizeEmail, normalizeUsername, USERNAME_REGEX } from '../../../lib/security';
@@ -45,14 +45,31 @@ async function getAuthEmailById(authId: string | null | undefined) {
         return null;
     }
 
-    const rows = await prisma.$queryRaw<Array<{ email: string | null }>>`
-        select email::text
-        from auth.users
-        where id = ${authId}::uuid
-        limit 1
-    `;
+    try {
+        const functionRows = await prisma.$queryRaw<Array<{ email: string | null }>>`
+            select public.get_auth_email_by_id(${authId}) as email
+        `;
 
-    return rows[0]?.email ?? null;
+        if (functionRows[0]?.email) {
+            return functionRows[0].email;
+        }
+    } catch (error) {
+        console.error('[AUTH EMAIL LOOKUP FUNCTION]', authId, error);
+    }
+
+    try {
+        const directRows = await prisma.$queryRaw<Array<{ email: string | null }>>`
+            select email::text
+            from auth.users
+            where id = ${authId}::uuid
+            limit 1
+        `;
+
+        return directRows[0]?.email ?? null;
+    } catch (error) {
+        console.error('[AUTH EMAIL LOOKUP DIRECT]', authId, error);
+        return null;
+    }
 }
 
 export async function POST(req: Request) {
@@ -204,7 +221,7 @@ export async function POST(req: Request) {
                     return errorResponse(401, 'invalid_credentials');
                 }
 
-                const user = await ensureAppUserProfile(signIn.session.user);
+                const user = await ensureAppUserProfileWithSupabase(signIn.session.access_token, signIn.session.user);
 
                 return NextResponse.json({
                     id: user.id,
@@ -264,7 +281,7 @@ export async function POST(req: Request) {
 
             if (signInError || !signIn?.session) {
                 console.error('Supabase signIn error:', signInError);
-                return NextResponse.json({ id: user.id, username: user.username, monthlyGoal: user.monthlyGoal });
+                return errorResponse(401, 'invalid_credentials');
             }
 
             return NextResponse.json({

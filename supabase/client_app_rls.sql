@@ -1,6 +1,21 @@
 -- Baseline RLS so the mobile app can talk directly to Supabase with the anon key.
 -- Run this in the Supabase SQL Editor after confirming table and column names.
 
+create or replace function public.get_auth_email_by_id(target_auth_id text)
+returns text
+language sql
+security definer
+set search_path = public, auth
+as $$
+  select email::text
+  from auth.users
+  where id = target_auth_id::uuid
+  limit 1
+$$;
+
+revoke all on function public.get_auth_email_by_id(text) from public;
+grant execute on function public.get_auth_email_by_id(text) to postgres;
+
 alter table public."User" enable row level security;
 alter table public."Transaction" enable row level security;
 alter table public."ScanUsage" enable row level security;
