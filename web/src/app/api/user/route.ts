@@ -61,7 +61,8 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: 'Meta mensual inválida' }, { status: 400 });
         }
 
-        const nextCurrency = isSupportedCurrency(currency) ? currency : currentProfile.currency;
+        const currentCurrency = isSupportedCurrency(currentProfile.currency) ? currentProfile.currency : 'USD';
+        const nextCurrency = isSupportedCurrency(currency) ? currency : currentCurrency;
         const nextAvailableCurrencies = normalizeAvailableCurrencies(availableCurrencies, nextCurrency);
         const nextGoalCurrency = isSupportedCurrency(goalCurrency) && nextAvailableCurrencies.includes(goalCurrency)
             ? goalCurrency

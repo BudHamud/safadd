@@ -464,11 +464,11 @@ export async function PUT(req: Request) {
 
   const supabase = createAuthenticatedSupabaseClient(accessToken ?? '');
   const now = new Date().toISOString();
-  const updatePayload = nextStatus === 'open'
+  const updatePayload: Parameters<typeof updateReport>[1] = nextStatus === 'open'
     ? { status: 'open', resolved_at: null, archived_at: null, resolved_by: null }
     : nextStatus === 'solved'
       ? { status: 'solved', resolved_at: now, archived_at: null, resolved_by: adminCheck.currentUser.id }
-      : { status: 'archived', archived_at: now, resolved_by: adminCheck.currentUser.id };
+      : { status: 'archived', resolved_at: null, archived_at: now, resolved_by: adminCheck.currentUser.id };
 
   let data: DebugReportRow | null = null;
   try {
