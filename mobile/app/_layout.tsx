@@ -1,12 +1,15 @@
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Updates from 'expo-updates';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { TransactionsProvider } from '../context/TransactionsContext';
+import { AdminReportsProvider } from '../context/AdminReportsContext';
 import { LanguageProvider, useLanguage } from '../context/LanguageContext';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
-import { DialogProvider } from '../context/DialogContext';
+import { DialogProvider, useDialog } from '../context/DialogContext';
 import Toast, { BaseToast, ErrorToast } from 'react-native-toast-message';
 import { AppSplash } from '../components/layout/AppSplash';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -38,10 +41,14 @@ function getToastConfig(C: ReturnType<typeof useTheme>['theme']) {
 function RootLayoutNav() {
   const { session, loading, configError } = useAuth();
   const { theme: C, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const dialog = useDialog();
   const segments = useSegments();
   const router = useRouter();
   const [minSplashElapsed, setMinSplashElapsed] = useState(false);
+  const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
+  const [lastPromptedUpdateId, setLastPromptedUpdateId] = useState<string | null>(null);
+  const hasCheckedForUpdateOnLaunch = useRef(false);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -72,6 +79,68 @@ function RootLayoutNav() {
       router.replace('/(tabs)');
     }
   }, [session, loading, segments, router]);
+
+  const checkForAvailableUpdate = useCallback(async () => {
+    if (loading || configError || !minSplashElapsed || isCheckingForUpdate || !Updates.isEnabled) {
+      return;
+    }
+
+    setIsCheckingForUpdate(true);
+
+    try {
+      const update = await Updates.checkForUpdateAsync();
+      if (!update.isAvailable) {
+        return;
+      }
+
+      const updateId = update.manifest?.id ?? 'available-update';
+      if (lastPromptedUpdateId === updateId) {
+        return;
+      }
+
+      setLastPromptedUpdateId(updateId);
+
+      const shouldApply = await dialog.confirm({
+        title: lang === 'es' ? 'Actualizacion disponible' : 'Update available',
+        message:
+          lang === 'es'
+            ? 'Hay una nueva version lista para instalar. La app se va a reiniciar para aplicarla.'
+            : 'A new version is ready to install. The app will restart to apply it.',
+        confirmText: lang === 'es' ? 'Actualizar' : 'Update',
+        cancelText: lang === 'es' ? 'Despues' : 'Later',
+        type: 'confirm',
+      });
+
+      if (!shouldApply) {
+        return;
+      }
+
+      await Updates.fetchUpdateAsync();
+      await Updates.reloadAsync();
+    } catch (error) {
+      console.warn('[expo-updates] automatic update check failed', error);
+    } finally {
+      setIsCheckingForUpdate(false);
+    }
+  }, [loading, configError, minSplashElapsed, isCheckingForUpdate, lastPromptedUpdateId, dialog, lang]);
+
+  useEffect(() => {
+    if (loading || configError || !minSplashElapsed) {
+      return;
+    }
+
+    if (hasCheckedForUpdateOnLaunch.current) {
+      return;
+    }
+
+    hasCheckedForUpdateOnLaunch.current = true;
+
+    const timer = setTimeout(() => {
+      void checkForAvailableUpdate();
+    }, 1800);
+
+    return () => clearTimeout(timer);
+  }, [loading, configError, minSplashElapsed, checkForAvailableUpdate]);
 
   if (configError) {
     return (
@@ -105,9 +174,13 @@ export default function RootLayout() {
       <LanguageProvider>
         <ThemeProvider>
           <AuthProvider>
-            <DialogProvider>
-              <RootLayoutNav />
-            </DialogProvider>
+            <TransactionsProvider>
+              <AdminReportsProvider>
+                <DialogProvider>
+                  <RootLayoutNav />
+                </DialogProvider>
+              </AdminReportsProvider>
+            </TransactionsProvider>
           </AuthProvider>
         </ThemeProvider>
       </LanguageProvider>

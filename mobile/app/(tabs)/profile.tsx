@@ -15,23 +15,27 @@ import { ProfileNotificationsView } from '../../components/profile/ProfileNotifi
 import { ProfileSyncView } from '../../components/profile/ProfileSyncView';
 import { ProfileCategoriesView } from '../../components/profile/ProfileCategoriesView';
 import { ProfileDebugView } from '../../components/profile/ProfileDebugView';
+import { ProfileAdminReportsView } from '../../components/profile/ProfileAdminReportsView';
+import { CurrencySelectorModal } from '../../components/profile/CurrencySelectorModal';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import { useDisplayGoalAmount } from '../../hooks/useDisplayGoalAmount';
 import { useLanguage } from '../../context/LanguageContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useAdminReports } from '../../context/AdminReportsContext';
 import { haptic } from '../../utils/haptics';
 import { formatAmount } from '../../lib/locale';
 import { getCurrencySymbol } from '../../lib/currency';
 import { useDialog } from '../../context/DialogContext';
 import { getSyncMode, getPendingCount, type SyncMode } from '../../lib/offlineQueue';
-import { ModalSafeAreaView } from '../../components/layout/ModalSafeAreaView';
+import Toast, { BaseToast, ErrorToast } from 'react-native-toast-message';
 
-type Section = 'identity' | 'goal' | 'theme' | 'categories' | 'notifications' | 'sync' | 'debug' | null;
+type Section = 'identity' | 'goal' | 'theme' | 'categories' | 'notifications' | 'sync' | 'debug' | 'adminReports' | null;
 
 export default function ProfileScreen() {
-  const { user, profile, webUser, signOut, currency, availableCurrencies, setCurrency, addCurrency } = useAuth();
+  const { user, profile, webUser, signOut, currency, availableCurrencies, setCurrency, addCurrency, removeCurrency } = useAuth();
   const { lang, setLang, t } = useLanguage();
   const { theme: C } = useTheme();
+  const { openCount, unseenCount } = useAdminReports();
   const dialog = useDialog();
   const [activeSection, setActiveSection] = useState<Section>(null);
   const [isCurrencyModalOpen, setIsCurrencyModalOpen] = useState(false);
@@ -63,6 +67,7 @@ export default function ProfileScreen() {
   const languageLabel = lang === 'es' ? t('profile.language_name_es') : t('profile.language_name_en');
   const appVersion = Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? '1.0.0';
   const versionLabel = `Safadd v${appVersion}`;
+  const isAdmin = (webUser?.role ?? '').toLowerCase() === 'admin';
 
   const now = new Date();
   const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
@@ -185,7 +190,7 @@ export default function ProfileScreen() {
             <Text style={{ fontSize: 13, color: C.textMuted }}>🌐</Text>
           </View>
           {/* Current currency — large, updates instantly on change */}
-          <Text style={[s.currencyName, { color: C.textMain }]}>{currentCurrencyLabel.toUpperCase()}</Text>
+          <Text style={[s.currencyName, { color: C.textMain }]}>{`${getCurrencySymbol(currency)} ${currency}`}</Text>
           <Text style={[s.cardLabel, { color: C.textMuted }]}>
             {`${availableCurrencies.length} ${t('profile.currency_available').toUpperCase()}`}
           </Text>
@@ -297,6 +302,20 @@ export default function ProfileScreen() {
           C={C}
         />
 
+        {isAdmin ? (
+          <RowItem
+            iconChar="🛠"
+            label={t('mobile.admin_reports.row_label')}
+            value={unseenCount > 0
+              ? t('mobile.admin_reports.unseen_count', { count: unseenCount })
+              : t('mobile.admin_reports.open_count', { count: openCount })}
+            valueColor={unseenCount > 0 ? C.primary : C.textMain}
+            badgeCount={unseenCount > 0 ? unseenCount : null}
+            onPress={() => { haptic.selection(); setActiveSection('adminReports'); }}
+            C={C}
+          />
+        ) : null}
+
         {/* ══════════════════════════════════════════════
             LOGOUT — sólido verde, igual que web
         ══════════════════════════════════════════════ */}
@@ -321,69 +340,15 @@ export default function ProfileScreen() {
         <Text style={[s.version, { color: C.textMuted }]}>{versionLabel}</Text>
       </ScrollView>
 
-      <Modal
-        transparent
+      <CurrencySelectorModal
         visible={isCurrencyModalOpen}
-        statusBarTranslucent
-        navigationBarTranslucent
-        animationType="fade"
-        onRequestClose={() => setIsCurrencyModalOpen(false)}
-      >
-        <View style={[s.overlay, { backgroundColor: `${C.bg}CC` }]}> 
-          <TouchableOpacity style={s.overlayDismiss} activeOpacity={1} onPress={() => setIsCurrencyModalOpen(false)} />
-          <ModalSafeAreaView style={s.overlayViewport}>
-            <View style={[s.currencyModal, { backgroundColor: C.surface, borderColor: C.border }]}> 
-              <View style={s.currencyModalHeader}>
-                <Text style={[s.currencyModalTitle, { color: C.textMain }]}>{t('profile.card_currency').toUpperCase()}</Text>
-                <Text style={[s.currencyModalSubtitle, { color: C.textMuted }]}>{t('profile.currency_sub').toUpperCase()}</Text>
-              </View>
-              {enabledCurrencyOptions.map((option) => {
-                const selected = option.value === currency;
-                return (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[s.currencyOption, { borderColor: C.border, backgroundColor: selected ? `${C.primary}18` : C.surfaceAlt }]}
-                    onPress={() => handleCurrencySelect(option.value)}
-                    activeOpacity={0.8}
-                  >
-                    <View>
-                      <Text style={[s.currencyOptionLabel, { color: selected ? C.textMain : C.textMuted }]}>{option.label.toUpperCase()}</Text>
-                      <Text style={[s.currencyOptionValue, { color: C.textMain }]}>{getCurrencySymbol(option.value)} {option.value}</Text>
-                    </View>
-                    <View style={[s.currencyOptionRadio, { borderColor: selected ? C.primary : C.border, backgroundColor: selected ? C.primary : 'transparent' }]}>
-                      {selected ? <View style={[s.currencyOptionDot, { backgroundColor: C.primaryText }]} /> : null}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-              {availableToAddOptions.length > 0 ? (
-                <View style={s.currencyAddBlock}>
-                  <Text style={[s.currencyAddTitle, { color: C.textMuted }]}>{t('profile.currency_add').toUpperCase()}</Text>
-                  <View style={s.currencyAddRow}>
-                    {availableToAddOptions.map((option) => (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[s.currencyAddBtn, { borderColor: C.border, backgroundColor: C.surfaceAlt }]}
-                        onPress={() => handleAddCurrency(option.value)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={[s.currencyAddBtnText, { color: C.textMain }]}>{getCurrencySymbol(option.value)} {option.value}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              ) : null}
-              <TouchableOpacity
-                style={[s.currencyCancel, { borderColor: C.border }]}
-                onPress={() => setIsCurrencyModalOpen(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={[s.currencyCancelText, { color: C.textMain }]}>{t('btn.cancel').toUpperCase()}</Text>
-              </TouchableOpacity>
-            </View>
-          </ModalSafeAreaView>
-        </View>
-      </Modal>
+        onClose={() => setIsCurrencyModalOpen(false)}
+        currency={currency}
+        availableCurrencies={availableCurrencies}
+        setCurrency={(c) => { haptic.selection(); return setCurrency(c); }}
+        addCurrency={addCurrency}
+        removeCurrency={removeCurrency}
+      />
 
       {/* ── Modals ── */}
       <Modal
@@ -394,7 +359,8 @@ export default function ProfileScreen() {
           activeSection === 'categories' ||
           activeSection === 'notifications' ||
           activeSection === 'sync' ||
-          activeSection === 'debug'
+          activeSection === 'debug' ||
+          activeSection === 'adminReports'
         }
         presentationStyle="pageSheet"
         animationType="slide"
@@ -414,7 +380,31 @@ export default function ProfileScreen() {
           <ProfileSyncView onClose={() => setActiveSection(null)} onSyncNow={syncPendingTransactions} />
         ) : activeSection === 'debug' ? (
           <ProfileDebugView onClose={() => setActiveSection(null)} />
+        ) : activeSection === 'adminReports' ? (
+          <ProfileAdminReportsView onClose={() => setActiveSection(null)} />
         ) : null}
+        {/* Toast must be rendered inside the Modal to appear above it on Android */}
+        <Toast
+          config={{
+            success: (props: any) => (
+              <BaseToast
+                {...props}
+                style={{ borderLeftColor: C.incomeText, backgroundColor: C.surface, borderRadius: 12 }}
+                contentContainerStyle={{ paddingHorizontal: 15 }}
+                text1Style={{ color: C.textMain, fontSize: 14, fontWeight: '700' }}
+                text2Style={{ color: C.textMuted, fontSize: 13 }}
+              />
+            ),
+            error: (props: any) => (
+              <ErrorToast
+                {...props}
+                style={{ borderLeftColor: C.expenseText, backgroundColor: C.surface, borderRadius: 12 }}
+                text1Style={{ color: C.textMain, fontSize: 14, fontWeight: '700' }}
+                text2Style={{ color: C.textMuted, fontSize: 13 }}
+              />
+            ),
+          }}
+        />
       </Modal>
     </SafeAreaView>
   );
@@ -422,12 +412,13 @@ export default function ProfileScreen() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 function RowItem({
-  iconChar, label, value, valueColor, onPress, C,
+  iconChar, label, value, valueColor, badgeCount, onPress, C,
 }: {
   iconChar: string;
   label: string;
   value: string;
   valueColor?: string;
+  badgeCount?: number | null;
   onPress: () => void;
   C: typeof import('../../constants/Colors').Dark;
 }) {
@@ -441,7 +432,14 @@ function RowItem({
         <Text style={{ fontSize: 16, color: C.textMuted }}>{iconChar}</Text>
       </View>
       <View style={s.rowContent}>
-        <Text style={[s.rowLabel, { color: C.textMuted }]}>{label.toUpperCase()}</Text>
+        <View style={s.rowLabelWrap}>
+          <Text style={[s.rowLabel, { color: C.textMuted }]}>{label.toUpperCase()}</Text>
+          {badgeCount && badgeCount > 0 ? (
+            <View style={[s.rowBadge, { backgroundColor: C.primary }]}>
+              <Text style={[s.rowBadgeText, { color: C.primaryText }]}>{badgeCount > 9 ? '9+' : badgeCount}</Text>
+            </View>
+          ) : null}
+        </View>
         <Text style={[s.rowValue, { color: valueColor ?? C.textMain }]} numberOfLines={1}>
           {value.toUpperCase()}
         </Text>
@@ -485,7 +483,10 @@ const s = StyleSheet.create({
   },
   rowIcon: { width: 36, height: 36, borderWidth: 1, borderRadius: R, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   rowContent: { flex: 1, minWidth: 0 },
+  rowLabelWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowLabel: { fontSize: 8, fontWeight: FontWeight.black, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 3 },
+  rowBadge: { minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5, marginBottom: 3 },
+  rowBadgeText: { fontSize: 9, fontWeight: FontWeight.black },
   rowValue: { fontSize: 14, fontWeight: FontWeight.black, letterSpacing: 0.2, textTransform: 'uppercase' },
   overlay: { flex: 1, justifyContent: 'flex-end' },
   overlayDismiss: { flex: 1 },

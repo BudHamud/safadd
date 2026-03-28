@@ -7,12 +7,6 @@ function trimTrailingSlash(value) {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function isDevelopmentBuild() {
-  if (typeof __DEV__ !== 'undefined') return __DEV__;
-  if (typeof process === 'undefined') return false;
-  return process.env.NODE_ENV !== 'production';
-}
-
 function isPrivateHostname(hostname) {
   const normalizedHost = hostname.toLowerCase();
 
@@ -53,9 +47,13 @@ function getApiBase() {
 
   try {
     const parsed = new URL(normalizedBase);
-    const isDev = isDevelopmentBuild();
 
-    if (!isDev && (parsed.protocol !== 'https:' || isPrivateHostname(parsed.hostname))) {
+    // Only block non-HTTPS URLs that are not private/local hostnames.
+    // Private/local IPs and localhost are always allowed regardless of build type
+    // so that local dev servers (e.g. 192.168.x.x:3000) reach the correct host.
+    const isPrivate = isPrivateHostname(parsed.hostname);
+    const isSecure = parsed.protocol === 'https:';
+    if (!isPrivate && !isSecure) {
       return DEFAULT_API_BASE;
     }
 

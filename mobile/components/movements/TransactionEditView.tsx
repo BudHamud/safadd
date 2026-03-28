@@ -48,6 +48,8 @@ const GOAL_OPTIONS: { value: GoalType; labelKey: string }[] = [
   { value: 'mensual', labelKey: 'order.goal_monthly' },
   { value: 'periodo', labelKey: 'order.goal_period' },
 ];
+const PERIOD_OPTIONS = [3, 6, 12, 24] as const;
+
 function formatDateValue(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -227,6 +229,14 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
   const [cardDigits, setCardDigits] = useState(seed?.cardDigits ?? '');
   const [excludeFromBudget, setExcludeFromBudget] = useState<boolean>(seed?.excludeFromBudget ?? false);
   const [periodicity, setPeriodicity] = useState<number>(seed?.periodicity ?? 12);
+  const [customPeriodicity, setCustomPeriodicity] = useState<string>(() => {
+    const initial = seed?.periodicity;
+    return initial && !PERIOD_OPTIONS.includes(initial as (typeof PERIOD_OPTIONS)[number]) ? String(initial) : '';
+  });
+  const [usesCustomPeriodicity, setUsesCustomPeriodicity] = useState<boolean>(() => {
+    const initial = seed?.periodicity;
+    return Boolean(initial && !PERIOD_OPTIONS.includes(initial as (typeof PERIOD_OPTIONS)[number]));
+  });
   const [saving, setSaving] = useState(false);
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
@@ -242,7 +252,6 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
 
   const selectedCat = categories.find((category) => category.name === tag);
   const canExclude = type === 'expense';
-  const periodOptions = useMemo(() => [3, 6, 12, 24], []);
   const pickerText = selectedCat
     ? `${selectedCat.icon} ${selectedCat.name}`
     : tag
@@ -268,6 +277,7 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
       ? parsed.toLocaleDateString(lang === 'en' ? 'en-US' : 'es-AR', { day: '2-digit', month: 'short', year: 'numeric' })
       : date;
   }, [date, lang]);
+  const resolvedPeriodicity = usesCustomPeriodicity ? Number(customPeriodicity) : periodicity;
 
   useEffect(() => {
     const parsed = parseDateInput(date);
@@ -365,7 +375,8 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
         if (payload?.isLimited) {
           setScanLimitReached(true);
         }
-        throw new Error(payload?.error || t('order.scan_error'));
+        // Use localized message instead of raw API error (which may be in a different language)
+        throw new Error(t('order.scan_error'));
       }
 
       applyScanPayload(payload);
@@ -430,6 +441,17 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
       Toast.show({ type: 'error', text1: t('field.date'), text2: 'YYYY-MM-DD' });
       return;
     }
+    if (goalType === 'periodo') {
+      if (!Number.isInteger(resolvedPeriodicity) || resolvedPeriodicity <= 0) {
+        haptic.error();
+        Toast.show({
+          type: 'error',
+          text1: t('order.period_frequency'),
+          text2: t('mobile.order.custom_periodicity_required'),
+        });
+        return;
+      }
+    }
 
     setSaving(true);
     try {
@@ -459,7 +481,7 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
         tag,
         icon,
         paymentMethod: type === 'expense' ? paymentMethod || null : null,
-        periodicity: goalType === 'periodo' ? periodicity : null,
+        periodicity: goalType === 'periodo' ? resolvedPeriodicity : null,
         excludeFromBudget: canExclude ? excludeFromBudget : false,
         isCancelled: tx?.isCancelled ?? false,
         goalType,
@@ -552,7 +574,7 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
             <View style={styles.field}>
               <Text style={[styles.label, { color: C.textMuted }]}>{t('order.period_frequency').toUpperCase()}</Text>
               <View style={styles.periodRow}>
-                {periodOptions.map((value) => {
+                {PERIOD_OPTIONS.map((value) => {
                   const active = periodicity === value;
                   return (
                     <TouchableOpacity
@@ -560,6 +582,7 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
                       style={[styles.periodBtn, { borderColor: active ? C.primary : C.border, backgroundColor: active ? C.surfaceHover : C.surface }]}
                       onPress={() => {
                         haptic.selection();
+                        setUsesCustomPeriodicity(false);
                         setPeriodicity(value);
                       }}
                     >
@@ -567,7 +590,41 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
                     </TouchableOpacity>
                   );
                 })}
+                <TouchableOpacity
+                  style={[
+                    styles.periodBtn,
+                    {
+                      borderColor: usesCustomPeriodicity ? C.primary : C.border,
+                      backgroundColor: usesCustomPeriodicity ? C.surfaceHover : C.surface,
+                    },
+                  ]}
+                  onPress={() => {
+                    haptic.selection();
+                    setUsesCustomPeriodicity(true);
+                    if (!customPeriodicity.trim()) {
+                      setCustomPeriodicity(String(periodicity));
+                    }
+                  }}
+                >
+                  <Text style={[styles.periodBtnText, { color: usesCustomPeriodicity ? C.textMain : C.textMuted }]}>
+                    {t('mobile.order.custom_months').toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
               </View>
+              {usesCustomPeriodicity ? (
+                <TextInput
+                  style={[styles.input, styles.customPeriodInput, { backgroundColor: C.surface, borderColor: C.border, color: C.textMain }]}
+                  value={customPeriodicity}
+                  onChangeText={(value) => {
+                    const sanitized = value.replace(/\D/g, '').slice(0, 3);
+                    setCustomPeriodicity(sanitized);
+                  }}
+                  placeholder={t('mobile.order.custom_periodicity_placeholder')}
+                  placeholderTextColor={C.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+              ) : null}
             </View>
           ) : null}
 
@@ -968,6 +1025,7 @@ const styles = StyleSheet.create({
   goalToggle: { flexDirection: 'row', gap: 3, borderWidth: 1, borderRadius: 2, padding: 3 },
   goalBtn: { flex: 1, borderWidth: 1, borderColor: 'transparent', borderRadius: 2, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
   goalBtnText: { fontSize: 10, fontWeight: FontWeight.black, letterSpacing: 0.45 },
+  customPeriodInput: { marginTop: Spacing.sm },
   ticketBlock: { borderWidth: 1, borderRadius: 2, padding: Spacing.base, gap: Spacing.sm },
   ticketHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.sm },
   ticketTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

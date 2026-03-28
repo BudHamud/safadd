@@ -155,7 +155,7 @@ export async function POST(req: Request) {
 
             const hashedPassword = await bcrypt.hash(password, 12);
             const newUserId = randomUUID();
-            let newUser: { id: string; username: string; monthlyGoal: number } | null = null;
+            let newUser: { id: string; username: string; monthlyGoal: number; currency: string; goalCurrency: string; availableCurrencies: string[] } | null = null;
             let createError: { code?: string; message?: string } | null = null;
 
             for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -170,8 +170,11 @@ export async function POST(req: Request) {
                             password: hashedPassword,
                             authId: authData.user.id,
                             monthlyGoal: nextMonthlyGoal,
+                            currency: 'USD',
+                            goalCurrency: 'USD',
+                            availableCurrencies: ['USD'],
                         },
-                        select: { id: true, username: true, monthlyGoal: true },
+                        select: { id: true, username: true, monthlyGoal: true, currency: true, goalCurrency: true, availableCurrencies: true },
                     });
                     createError = null;
                     break;
@@ -201,6 +204,9 @@ export async function POST(req: Request) {
                 id: newUser.id,
                 username: newUser.username,
                 monthlyGoal: newUser.monthlyGoal,
+                currency: newUser.currency,
+                goalCurrency: newUser.goalCurrency,
+                availableCurrencies: newUser.availableCurrencies,
                 access_token: signIn.session?.access_token ?? null,
                 refresh_token: signIn.session?.refresh_token ?? null,
             });
@@ -227,6 +233,9 @@ export async function POST(req: Request) {
                     id: user.id,
                     username: user.username,
                     monthlyGoal: user.monthlyGoal,
+                    currency: user.currency,
+                    goalCurrency: user.goalCurrency,
+                    availableCurrencies: user.availableCurrencies,
                     access_token: signIn.session.access_token,
                     refresh_token: signIn.session.refresh_token,
                 });
@@ -234,7 +243,7 @@ export async function POST(req: Request) {
 
             const user = await prisma.user.findUnique({
                 where: { username: normalizedUsername },
-                select: { id: true, username: true, password: true, monthlyGoal: true, authId: true },
+                select: { id: true, username: true, password: true, monthlyGoal: true, authId: true, currency: true, goalCurrency: true, availableCurrencies: true },
             });
 
             if (!user) {
@@ -288,6 +297,9 @@ export async function POST(req: Request) {
                 id: user.id,
                 username: user.username,
                 monthlyGoal: user.monthlyGoal,
+                currency: user.currency,
+                goalCurrency: user.goalCurrency,
+                availableCurrencies: user.availableCurrencies,
                 access_token: signIn.session.access_token,
                 refresh_token: signIn.session.refresh_token,
             });

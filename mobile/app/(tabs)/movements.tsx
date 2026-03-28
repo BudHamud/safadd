@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, RefreshControl, ActivityIndicator, ScrollView, Modal,
@@ -47,7 +47,15 @@ export default function MovementsScreen() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Transaction | null>(null);
   const [showPeriodModal, setShowPeriodModal] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(10);
   const monthlyGoal = useDisplayGoalAmount(profile?.monthly_goal ?? 0);
+
+  // Reset visible count whenever the active filter set changes
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [filters.scope, filters.month, filters.year, filters.type, filters.tag, filters.search]);
+
+  const visibleItems = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
   const totalIncome = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const totalExpense = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -241,7 +249,7 @@ export default function MovementsScreen() {
         </View>
       ) : (
         <FlatList
-          data={filtered}
+          data={visibleItems}
           keyExtractor={item => item.id}
           renderItem={({ item }) => (
             <TxCard
@@ -252,6 +260,8 @@ export default function MovementsScreen() {
           )}
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={refetch} tintColor={C.primary} />}
+          onEndReached={() => setVisibleCount(prev => Math.min(prev + 10, filtered.length))}
+          onEndReachedThreshold={0.4}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📭</Text>
@@ -265,6 +275,12 @@ export default function MovementsScreen() {
           }
           ListFooterComponent={
             <View style={styles.footerPanel}>
+              {/* Pagination counter */}
+              {filtered.length > 0 ? (
+                <Text style={[styles.paginationHint, { color: C.textMuted }]}>
+                  {Math.min(visibleCount, filtered.length)} / {filtered.length}
+                </Text>
+              ) : null}
               {/* Insights sidebar panel — matches web MovementsSidebar in fullWidth mobile mode */}
               <View style={[styles.insightsCard, { backgroundColor: C.surface, borderColor: C.border }]}>
                 <View style={[styles.insightsHeader, { borderBottomColor: C.borderDim }]}>
@@ -494,6 +510,13 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   footerPanel: { paddingHorizontal: 0, paddingBottom: Spacing.xxxl },
+  paginationHint: {
+    textAlign: 'center',
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    letterSpacing: 0.5,
+    paddingVertical: Spacing.md,
+  },
   insightsCard: {
     borderWidth: 1,
     borderRadius: 2,

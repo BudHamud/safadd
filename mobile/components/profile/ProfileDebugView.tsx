@@ -20,7 +20,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { Spacing, FontWeight } from '../../constants/theme';
 import { haptic } from '../../utils/haptics';
-import { supabase } from '../../lib/supabase';
+import { apiFetch } from '../../lib/api';
 
 const MAX_IMAGES = 5;
 const IMAGE_MEDIA_TYPES: ImagePicker.MediaType[] = ['images'];
@@ -35,6 +35,7 @@ type DebugReportItem = {
   platform?: string | null;
   app_version?: string | null;
   created_at?: string | null;
+  status?: 'open' | 'solved' | 'archived' | null;
 };
 
 function normalizeBase64(value: string | null) {
@@ -42,15 +43,6 @@ function normalizeBase64(value: string | null) {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.replace(/^data:[^;]+;base64,/, '');
-}
-
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer as ArrayBuffer;
 }
 
 function serializeDebugError(error: any, extra: Record<string, unknown> = {}) {
@@ -74,7 +66,7 @@ function serializeDebugError(error: any, extra: Record<string, unknown> = {}) {
 export function ProfileDebugView({ onClose }: Props) {
   const { theme: C } = useTheme();
   const { t } = useLanguage();
-  const { user } = useAuth();
+  const { session, user } = useAuth();
 
   const [description, setDescription] = useState('');
   const [images, setImages] = useState<ImageEntry[]>([]);
@@ -108,7 +100,7 @@ export function ProfileDebugView({ onClose }: Props) {
   };
 
   const loadReports = useCallback(async () => {
-    if (!user?.id) {
+    if (!session || !user?.id) {
       setReports([]);
       setLoadingReports(false);
       return;
@@ -116,23 +108,19 @@ export function ProfileDebugView({ onClose }: Props) {
 
     setLoadingReports(true);
 
-    const { data, error } = await supabase
-      .from('debug_reports')
-      .select('id, description, images_count, platform, app_version, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(10);
+    const response = await apiFetch('/api/debug-reports?limit=20', undefined, session);
+    const payload = await response.json().catch(() => ({}));
 
-    if (error) {
-      console.error(`[DebugReport] list_failed ${serializeDebugError(error, { userId: user.id })}`);
+    if (!response.ok) {
+      console.error(`[DebugReport] list_failed ${serializeDebugError(payload, { userId: user.id })}`);
       setReports([]);
       setLoadingReports(false);
       return;
     }
 
-    setReports((data ?? []) as DebugReportItem[]);
+    setReports(Array.isArray(payload?.reports) ? payload.reports : []);
     setLoadingReports(false);
-  }, [user?.id]);
+  }, [session, user?.id]);
 
   useEffect(() => {
     void loadReports();
@@ -196,43 +184,27 @@ export function ProfileDebugView({ onClose }: Props) {
     haptic.selection();
 
     try {
-      if (!user?.id) {
-        throw new Error('missing_user');
+      if (!user?.id || !session) {
+        throw new Error('missing_session');
       }
 
-      const { data: report, error: insertError } = await supabase
-        .from('debug_reports')
-        .insert({
-          user_id: user.id,
+      const response = await apiFetch('/api/debug-reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           description: description.trim(),
           device_info: deviceInfo,
           app_version: appVersion,
           platform: Platform.OS,
-          images_count: images.length,
-        })
-        .select('id')
-        .single();
+          images: images
+            .map((entry) => ({ base64: normalizeBase64(entry.base64) }))
+            .filter((entry) => entry.base64),
+        }),
+      }, session);
+      const payload = await response.json().catch(() => ({}));
 
-      if (insertError || !report?.id) {
-        throw insertError ?? new Error('debug_report_insert_failed');
-      }
-
-      for (let index = 0; index < images.length; index += 1) {
-        const normalizedBase64 = normalizeBase64(images[index]?.base64 ?? null);
-        if (!normalizedBase64) continue;
-
-        const bytes = base64ToArrayBuffer(normalizedBase64);
-        const path = `${user.id}/${report.id}/${index}.jpg`;
-        const { error: uploadError } = await supabase.storage
-          .from('debug-attachments')
-          .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
-
-        if (uploadError) {
-          // Rollback: delete the already-inserted report so admin doesn't see
-          // a partial entry and the user can retry with all images.
-          await supabase.from('debug_reports').delete().eq('id', report.id);
-          throw uploadError;
-        }
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === 'string' ? payload.error : 'debug_report_insert_failed');
       }
 
       haptic.success();
@@ -377,7 +349,7 @@ export function ProfileDebugView({ onClose }: Props) {
               </Text>
               <Text style={[s.reportDesc, { color: C.textMain }]} numberOfLines={3}>{report.description}</Text>
               <Text style={[s.reportMeta, { color: C.textMuted }]}>
-                {`${report.platform ?? Platform.OS} · v${report.app_version ?? appVersion} · ${report.images_count ?? 0} ${t('mobile.debug.report_images')}`}
+                {`${t(`mobile.debug.report_${report.status ?? 'open'}`)} · ${report.platform ?? Platform.OS} · v${report.app_version ?? appVersion} · ${report.images_count ?? 0} ${t('mobile.debug.report_images')}`}
               </Text>
             </View>
           )) : null}

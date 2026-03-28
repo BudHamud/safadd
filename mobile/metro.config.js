@@ -58,6 +58,12 @@ config.resolver.extraNodeModules = {
   'react-native': reactNativePackage,
 };
 
-config.resolver.disableHierarchicalLookup = true; 
+// disableHierarchicalLookup intentionally removed:
+// pnpm places each package's deps as siblings in its virtual store entry
+// (.pnpm/<pkg@version>/node_modules/<dep>). Disabling hierarchical lookup
+// prevents Metro from finding those siblings, causing cascading "Unable to resolve"
+// errors for transitives. The explicit extraNodeModules overrides above already
+// pin the critical packages (react, react-native, expo, expo-router, etc.)
+// so version conflicts are not a concern.
 
 module.exports = config;

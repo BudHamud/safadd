@@ -285,7 +285,12 @@ export default function StatsScreen() {
                         }}
                         style={styles.barGroup}
                       >
-                        <Text style={[styles.barValue, { color: active ? C.textMain : C.textMuted }]}>
+                        <Text
+                          style={[styles.barValue, { color: active ? C.textMain : C.textMuted }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.5}
+                        >
                           {value > 0 ? valueLabel : ''}
                         </Text>
                         <View
@@ -308,7 +313,14 @@ export default function StatsScreen() {
                             ]}
                           />
                         </View>
-                        <Text style={[styles.barLabel, { color: active ? C.textMain : C.textMuted }]}>{monthNames[index]}</Text>
+                        <Text
+                          style={[styles.barLabel, { color: active ? C.textMain : C.textMuted }]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.5}
+                        >
+                          {monthNames[index]}
+                        </Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -693,7 +705,7 @@ const styles = StyleSheet.create({
   barsArea: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 6,
+    gap: 4,
     height: 184,
     paddingTop: 18,
   },
@@ -721,7 +733,7 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: 9,
     fontWeight: FontWeight.black,
-    letterSpacing: 0.8,
+    letterSpacing: 0,
   },
   emptyCard: {
     borderWidth: 1,

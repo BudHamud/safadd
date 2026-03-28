@@ -51,7 +51,7 @@ export default function DashboardScreen() {
   const currentMonth = dashboardDate.getMonth();
   const currentYear = dashboardDate.getFullYear();
   const currentMonthName = formatMonthLabel(dashboardDate, lang, { month: 'long' });
-  const pageTitle = lang === 'en' ? 'DASHBOARD' : 'DASHBOARD';
+  const pageTitle = t('dashboard.title').toUpperCase();
   const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
   const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
   const prevExpense = transactions

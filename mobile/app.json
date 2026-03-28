@@ -2,7 +2,7 @@
   "expo": {
     "name": "Safadd",
     "slug": "safadd-app",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "safaddmobile",
@@ -11,19 +11,19 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.safadd.app",
-      "buildNumber": "1.1.0"
+      "buildNumber": "1.1.1"
     },
     "android": {
+      "package": "com.safadd.app",
+      "versionCode": 16,
+      "edgeToEdgeEnabled": true,
+      "googleServicesFile": "./google-services.json",
+      "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {
         "backgroundColor": "#141714",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      },
-      "edgeToEdgeEnabled": true,
-      "googleServicesFile": "./google-services.json",
-      "predictiveBackGestureEnabled": false,
-      "package": "com.safadd.app",
-      "versionCode": 15
+      }
     },
     "web": {
       "output": "static",
@@ -38,12 +38,18 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#141714",
-          "dark": {
-            "backgroundColor": "#141714"
-          }
+          "dark": { "backgroundColor": "#141714" }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#141714",
+          "defaultChannel": "default"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

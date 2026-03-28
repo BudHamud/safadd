@@ -48,3 +48,33 @@ Join our community of developers creating universal apps.
 
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+
+## EAS Update
+
+`safadd-mobile` quedó preparado para usar `expo-updates` con EAS Update en Android.
+
+Instalación desde el root del monorepo:
+
+```bash
+cd /home/adro/vsc
+pnpm install --no-frozen-lockfile
+```
+
+Variables necesarias:
+
+- `EXPO_PUBLIC_EAS_PROJECT_ID`: project id de Expo/EAS.
+
+Builds y updates:
+
+```bash
+pnpm --filter safadd-mobile eas:build:android:preview
+pnpm --filter safadd-mobile eas:build:android:production
+pnpm --filter safadd-mobile eas:update:preview -- --message "preview update"
+pnpm --filter safadd-mobile eas:update:production -- --message "production update"
+```
+
+Notas:
+
+- `app.config.ts` arma `updates.url` con `https://u.expo.dev/<project-id>`.
+- El runtime version usa la policy `appVersion`, así que cada release nativa nueva debe acompañarse con un bump de `version`.
+- Si falta `EXPO_PUBLIC_EAS_PROJECT_ID`, la build sigue funcionando pero OTA queda deshabilitado.

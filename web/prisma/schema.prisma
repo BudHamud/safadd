@@ -15,6 +15,10 @@ model User {
   authId       String?       @unique // Supabase Auth UUID (auth.users.id)
   role         String        @default("user") // "admin" | "user"
   monthlyGoal  Float         @default(3000)
+  currency     String        @default("USD")
+  goalCurrency String        @default("USD")
+  availableCurrencies String[] @default(["USD"])
+  pushToken    String?       // Expo push token for notifications
   transactions Transaction[]
   scanUsage    ScanUsage[]
   pendingNotifs PendingNotification[]
@@ -69,4 +73,12 @@ model PendingNotification {
   rawText     String
   transaction Json     // The prepared transaction object
   createdAt   DateTime @default(now())
+}
+
+// Singleton row (id = "global") caching the latest exchange rates fetched by the daily cron.
+model ExchangeRateCache {
+  id        String   @id
+  rates     Json
+  usdToArs  Float
+  fetchedAt DateTime @default(now())
 }

@@ -5,6 +5,10 @@ import { supabase, supabaseConfigError } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
 import { getItemWithLegacyKey } from '../lib/storage';
 import { Profile, WebUser } from '../types';
+import type { SupportedCurrency } from '@safed/shared/types';
+import { SUPPORTED_CURRENCIES } from '@safed/shared/currency';
+
+export type { SupportedCurrency };
 
 const CURRENCY_STORAGE_KEY = 'safadd_currency';
 const LEGACY_CURRENCY_STORAGE_KEY = 'safed_currency';
@@ -12,22 +16,9 @@ const GOAL_CURRENCY_STORAGE_KEY = 'safadd_goal_currency';
 const LEGACY_GOAL_CURRENCY_STORAGE_KEY = 'safed_goal_currency';
 const AVAILABLE_CURRENCIES_STORAGE_KEY = 'safadd_available_currencies';
 const LEGACY_AVAILABLE_CURRENCIES_STORAGE_KEY = 'safed_available_currencies';
-export type SupportedCurrency =
-  | 'ILS' | 'USD' | 'ARS' | 'EUR'
-  | 'GBP' | 'JPY' | 'CNY' | 'CAD' | 'AUD' | 'CHF'
-  | 'HKD' | 'SGD' | 'SEK' | 'NOK' | 'DKK' | 'NZD'
-  | 'MXN' | 'BRL' | 'INR' | 'KRW' | 'SAR' | 'AED'
-  | 'TRY' | 'ZAR' | 'PLN' | 'CZK' | 'HUF'
-  | 'CLP' | 'COP' | 'PEN' | 'UYU' | 'PYG' | 'BOB';
-const SUPPORTED_CURRENCIES: SupportedCurrency[] = [
-  'USD', 'EUR', 'ARS', 'ILS',
-  'GBP', 'JPY', 'CNY', 'CAD', 'AUD', 'CHF',
-  'HKD', 'SGD', 'SEK', 'NOK', 'DKK', 'NZD',
-  'MXN', 'BRL', 'INR', 'KRW', 'SAR', 'AED',
-  'TRY', 'ZAR', 'PLN', 'CZK', 'HUF',
-  'CLP', 'COP', 'PEN', 'UYU', 'PYG', 'BOB',
-];
-const SUPPORTED_CURRENCIES_SET = new Set<string>(SUPPORTED_CURRENCIES);
+const DEFAULT_CURRENCY: SupportedCurrency = 'USD';
+
+const SUPPORTED_CURRENCIES_SET = new Set<string>(SUPPORTED_CURRENCIES as string[]);
 
 function isSupportedCurrency(value: unknown): value is SupportedCurrency {
   return typeof value === 'string' && SUPPORTED_CURRENCIES_SET.has(value);
@@ -40,11 +31,37 @@ function normalizeStoredCurrencies(raw: string | null, fallback: SupportedCurren
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [fallback];
 
-    const unique = SUPPORTED_CURRENCIES.filter((currency) => parsed.includes(currency));
-    return unique.length > 0 ? unique : [fallback];
+    const valid = (parsed as unknown[]).filter((c): c is SupportedCurrency => isSupportedCurrency(c));
+    return valid.length > 0 ? valid : [fallback];
   } catch {
     return [fallback];
   }
+}
+
+function normalizeCurrencyList(raw: unknown, fallback: SupportedCurrency): SupportedCurrency[] {
+  if (!Array.isArray(raw)) return [fallback];
+
+  const valid = Array.from(new Set(raw.filter((value): value is SupportedCurrency => isSupportedCurrency(value))));
+  return valid.length > 0 ? valid : [fallback];
+}
+
+function resolveCurrencyPreferences(input: {
+  currency?: unknown;
+  goalCurrency?: unknown;
+  availableCurrencies?: unknown;
+}) {
+  const fallbackCurrency = isSupportedCurrency(input.currency) ? input.currency : DEFAULT_CURRENCY;
+  const nextAvailableCurrencies = normalizeCurrencyList(input.availableCurrencies, fallbackCurrency);
+  const nextCurrency = nextAvailableCurrencies.includes(fallbackCurrency) ? fallbackCurrency : nextAvailableCurrencies[0] ?? DEFAULT_CURRENCY;
+  const nextGoalCurrency = isSupportedCurrency(input.goalCurrency) && nextAvailableCurrencies.includes(input.goalCurrency)
+    ? input.goalCurrency
+    : nextCurrency;
+
+  return {
+    currency: nextCurrency,
+    goalCurrency: nextGoalCurrency,
+    availableCurrencies: nextAvailableCurrencies,
+  };
 }
 
 type AuthContextType = {
@@ -62,6 +79,7 @@ type AuthContextType = {
   availableCurrencies: SupportedCurrency[];
   setCurrency: (currency: SupportedCurrency) => Promise<void>;
   addCurrency: (currency: SupportedCurrency) => Promise<void>;
+  removeCurrency: (currency: SupportedCurrency) => Promise<void>;
   goalCurrency: SupportedCurrency;
   setGoalCurrency: (currency: SupportedCurrency) => Promise<void>;
 };
@@ -77,6 +95,7 @@ const AuthContext = createContext<AuthContextType>({
   availableCurrencies: ['USD'],
   setCurrency: async () => {},
   addCurrency: async () => {},
+  removeCurrency: async () => {},
   goalCurrency: 'USD',
   setGoalCurrency: async () => {},
 });
@@ -90,33 +109,88 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [availableCurrencies, setAvailableCurrenciesState] = useState<SupportedCurrency[]>(['USD']);
   const [loading, setLoading] = useState(true);
 
+  const persistCurrencyPreferencesLocally = useCallback(async (prefs: {
+    currency: SupportedCurrency;
+    goalCurrency: SupportedCurrency;
+    availableCurrencies: SupportedCurrency[];
+  }) => {
+    await Promise.all([
+      AsyncStorage.setItem(CURRENCY_STORAGE_KEY, prefs.currency),
+      AsyncStorage.setItem(GOAL_CURRENCY_STORAGE_KEY, prefs.goalCurrency),
+      AsyncStorage.setItem(AVAILABLE_CURRENCIES_STORAGE_KEY, JSON.stringify(prefs.availableCurrencies)),
+    ]);
+  }, []);
+
+  const applyCurrencyPreferences = useCallback((prefs: {
+    currency: SupportedCurrency;
+    goalCurrency: SupportedCurrency;
+    availableCurrencies: SupportedCurrency[];
+  }) => {
+    setCurrencyState(prefs.currency);
+    setGoalCurrencyState(prefs.goalCurrency);
+    setAvailableCurrenciesState(prefs.availableCurrencies);
+  }, []);
+
+  const syncCurrencyPreferencesRemotely = useCallback(async (prefs: {
+    currency: SupportedCurrency;
+    goalCurrency: SupportedCurrency;
+    availableCurrencies: SupportedCurrency[];
+  }) => {
+    if (supabaseConfigError || !user?.id) return;
+
+    const { error } = await supabase
+      .from('User')
+      .update({
+        currency: prefs.currency,
+        goalCurrency: prefs.goalCurrency,
+        availableCurrencies: prefs.availableCurrencies,
+      })
+      .eq('authId', user.id);
+
+    if (error) {
+      console.warn('[AuthContext] syncCurrencyPreferencesRemotely error:', error.message);
+      return;
+    }
+
+    setWebUser((current) => current
+      ? {
+          ...current,
+          currency: prefs.currency,
+          goalCurrency: prefs.goalCurrency,
+          availableCurrencies: prefs.availableCurrencies,
+        }
+      : current);
+  }, [user?.id]);
+
   useEffect(() => {
     Promise.all([
       getItemWithLegacyKey(CURRENCY_STORAGE_KEY, [LEGACY_CURRENCY_STORAGE_KEY]),
       getItemWithLegacyKey(GOAL_CURRENCY_STORAGE_KEY, [LEGACY_GOAL_CURRENCY_STORAGE_KEY]),
       getItemWithLegacyKey(AVAILABLE_CURRENCIES_STORAGE_KEY, [LEGACY_AVAILABLE_CURRENCIES_STORAGE_KEY]),
     ]).then(([storedCurrency, storedGoalCurrency, storedAvailableCurrencies]) => {
-      const fallbackCurrency = isSupportedCurrency(storedCurrency) ? storedCurrency : 'USD';
+      const fallbackCurrency = isSupportedCurrency(storedCurrency) ? storedCurrency : DEFAULT_CURRENCY;
       const nextAvailableCurrencies = normalizeStoredCurrencies(storedAvailableCurrencies, fallbackCurrency);
       const nextCurrency = isSupportedCurrency(storedCurrency) && nextAvailableCurrencies.includes(storedCurrency)
         ? storedCurrency
-        : nextAvailableCurrencies[0] ?? 'USD';
+        : nextAvailableCurrencies[0] ?? DEFAULT_CURRENCY;
       const nextGoalCurrency = isSupportedCurrency(storedGoalCurrency) && nextAvailableCurrencies.includes(storedGoalCurrency)
         ? storedGoalCurrency
         : nextCurrency;
 
-      setCurrencyState(nextCurrency);
-      setGoalCurrencyState(nextGoalCurrency);
-      setAvailableCurrenciesState(nextAvailableCurrencies);
+      applyCurrencyPreferences({
+        currency: nextCurrency,
+        goalCurrency: nextGoalCurrency,
+        availableCurrencies: nextAvailableCurrencies,
+      });
     }).catch(() => undefined);
-  }, []);
+  }, [applyCurrencyPreferences]);
 
   // Load User row from gastos-app schema by authId = auth.users.id
   const loadWebUser = useCallback(async (authUid: string) => {
     try {
       const { data, error } = await supabase
         .from('User')
-        .select('id, username, authId, role, monthlyGoal, createdAt')
+        .select('id, username, authId, role, monthlyGoal, currency, goalCurrency, availableCurrencies, createdAt')
         .eq('authId', authUid)
         .maybeSingle();
 
@@ -125,8 +199,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         return null;
       }
       if (data) {
-        setWebUser(data as WebUser);
-        return data as WebUser;
+        const typedData = data as WebUser;
+        const nextPrefs = resolveCurrencyPreferences({
+          currency: typedData.currency,
+          goalCurrency: typedData.goalCurrency,
+          availableCurrencies: typedData.availableCurrencies,
+        });
+
+        applyCurrencyPreferences(nextPrefs);
+        await persistCurrencyPreferencesLocally(nextPrefs);
+        setWebUser(typedData);
+        return typedData;
       }
       console.warn('[AuthContext] No User row found for authId', authUid);
       return null;
@@ -134,7 +217,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.warn('[AuthContext] loadWebUser exception:', e);
       return null;
     }
-  }, []);
+  }, [applyCurrencyPreferences, persistCurrencyPreferencesLocally]);
 
   useEffect(() => {
     if (supabaseConfigError) {
@@ -207,6 +290,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     username: webUser.username,
     full_name: webUser.username,
     currency,
+    goal_currency: goalCurrency,
+    available_currencies: availableCurrencies,
     monthly_goal: webUser.monthlyGoal,
     theme: 'dark',
     accent_color: null,
@@ -294,14 +379,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return { error };
     }
 
-    setCurrencyState('USD');
-    setGoalCurrencyState('USD');
-    setAvailableCurrenciesState(['USD']);
-    await Promise.all([
-      AsyncStorage.setItem(CURRENCY_STORAGE_KEY, 'USD'),
-      AsyncStorage.setItem(GOAL_CURRENCY_STORAGE_KEY, 'USD'),
-      AsyncStorage.setItem(AVAILABLE_CURRENCIES_STORAGE_KEY, JSON.stringify(['USD'])),
-    ]);
+    const defaultPrefs = { currency: DEFAULT_CURRENCY, goalCurrency: DEFAULT_CURRENCY, availableCurrencies: [DEFAULT_CURRENCY] };
+    applyCurrencyPreferences(defaultPrefs);
+    await persistCurrencyPreferencesLocally(defaultPrefs);
 
     return { error: null };
   };
@@ -326,23 +406,53 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const setCurrency = useCallback(async (nextCurrency: SupportedCurrency) => {
     const nextAvailableCurrencies = availableCurrencies.includes(nextCurrency)
       ? availableCurrencies
-      : SUPPORTED_CURRENCIES.filter((currencyOption) => [...availableCurrencies, nextCurrency].includes(currencyOption));
-    setAvailableCurrenciesState(nextAvailableCurrencies);
-    setCurrencyState(nextCurrency);
-    await AsyncStorage.setItem(CURRENCY_STORAGE_KEY, nextCurrency);
-    await AsyncStorage.setItem(AVAILABLE_CURRENCIES_STORAGE_KEY, JSON.stringify(nextAvailableCurrencies));
-  }, [availableCurrencies]);
+      : [...availableCurrencies, nextCurrency];
+    const nextPrefs = {
+      currency: nextCurrency,
+      goalCurrency: nextAvailableCurrencies.includes(goalCurrency) ? goalCurrency : nextCurrency,
+      availableCurrencies: nextAvailableCurrencies,
+    };
+
+    applyCurrencyPreferences(nextPrefs);
+    await persistCurrencyPreferencesLocally(nextPrefs);
+    await syncCurrencyPreferencesRemotely(nextPrefs);
+  }, [availableCurrencies, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
 
   const addCurrency = useCallback(async (nextCurrency: SupportedCurrency) => {
-    const nextAvailableCurrencies = SUPPORTED_CURRENCIES.filter((currencyOption) => currencyOption === nextCurrency || availableCurrencies.includes(currencyOption));
-    setAvailableCurrenciesState(nextAvailableCurrencies);
-    await AsyncStorage.setItem(AVAILABLE_CURRENCIES_STORAGE_KEY, JSON.stringify(nextAvailableCurrencies));
-  }, [availableCurrencies]);
+    if (availableCurrencies.includes(nextCurrency)) return;
+    const nextPrefs = {
+      currency,
+      goalCurrency,
+      availableCurrencies: [...availableCurrencies, nextCurrency],
+    };
+    applyCurrencyPreferences(nextPrefs);
+    await persistCurrencyPreferencesLocally(nextPrefs);
+    await syncCurrencyPreferencesRemotely(nextPrefs);
+  }, [availableCurrencies, currency, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
+
+  const removeCurrency = useCallback(async (code: SupportedCurrency) => {
+    if (code === currency || availableCurrencies.length <= 1) return;
+    const nextAvailableCurrencies = availableCurrencies.filter((c) => c !== code);
+    const nextPrefs = {
+      currency,
+      goalCurrency: code === goalCurrency ? currency : goalCurrency,
+      availableCurrencies: nextAvailableCurrencies,
+    };
+    applyCurrencyPreferences(nextPrefs);
+    await persistCurrencyPreferencesLocally(nextPrefs);
+    await syncCurrencyPreferencesRemotely(nextPrefs);
+  }, [availableCurrencies, currency, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
 
   const setGoalCurrency = useCallback(async (nextCurrency: SupportedCurrency) => {
-    setGoalCurrencyState(nextCurrency);
-    await AsyncStorage.setItem(GOAL_CURRENCY_STORAGE_KEY, nextCurrency);
-  }, []);
+    const nextPrefs = {
+      currency,
+      goalCurrency: availableCurrencies.includes(nextCurrency) ? nextCurrency : currency,
+      availableCurrencies,
+    };
+    applyCurrencyPreferences(nextPrefs);
+    await persistCurrencyPreferencesLocally(nextPrefs);
+    await syncCurrencyPreferencesRemotely(nextPrefs);
+  }, [availableCurrencies, currency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
 
   return (
     <AuthContext.Provider value={{
@@ -356,6 +466,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       availableCurrencies,
       setCurrency,
       addCurrency,
+      removeCurrency,
       goalCurrency,
       setGoalCurrency,
     }}>

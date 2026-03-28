@@ -39,6 +39,9 @@ export interface WebUser {
   authId?: string | null; // = auth.users.id
   role: string;
   monthlyGoal: number;
+  currency?: string | null;
+  goalCurrency?: string | null;
+  availableCurrencies?: string[] | null;
   createdAt: string;
 }
 
@@ -101,6 +104,8 @@ export interface Profile {
   username: string;
   full_name: string | null;
   currency: string;
+  goal_currency?: string | null;
+  available_currencies?: string[] | null;
   monthly_goal: number;
   theme: 'dark' | 'light';
   accent_color: string | null;
