@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { getApiBase } from '../lib/api';
+import { apiFetch } from '../lib/api';
 
 /**
  * Optionally registers for Expo push notifications and saves the token to
@@ -38,15 +38,13 @@ export async function registerPushToken(accessToken: string): Promise<void> {
     const pushToken = tokenData?.data;
     if (!pushToken) return;
 
-    const base = getApiBase();
-    await fetch(`${base}/api/push-token`, {
+    await apiFetch('/api/push-token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ pushToken }),
-    });
+    }, { access_token: accessToken });
   } catch {
     // Non-critical — never crash the app because of push registration
   }

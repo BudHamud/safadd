@@ -7,6 +7,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useDialog } from '../../context/DialogContext';
 import { apiFetch } from '../../lib/api';
+import { getRequestErrorMessage } from '../../lib/requestErrors';
 import { Spacing, Radius, FontSize, FontWeight } from '../../constants/theme';
 import { X, Save } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
@@ -18,7 +19,7 @@ type Props = {
 
 export function ProfileIdentityView({ onClose }: Props) {
   const { session, user, webUser, refreshProfile, signOut } = useAuth();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const { theme: C } = useTheme();
   const dialog = useDialog();
 
@@ -90,7 +91,7 @@ export function ProfileIdentityView({ onClose }: Props) {
       setNewEmail('');
       Toast.show({ type: 'success', text1: t('profile.email_section_title'), text2: t('profile.email_change_success') });
     } catch (error: any) {
-      Toast.show({ type: 'error', text1: t('details.save_error'), text2: error?.message || t('profile.email_change_error') });
+      Toast.show({ type: 'error', text1: t('details.save_error'), text2: getRequestErrorMessage(error, t('profile.email_change_error'), lang) });
     } finally {
       setEmailLoading(false);
     }
@@ -130,7 +131,7 @@ export function ProfileIdentityView({ onClose }: Props) {
       setConfirmPassword('');
       Toast.show({ type: 'success', text1: t('profile.password_section_title'), text2: t('profile.password_change_success') });
     } catch (error: any) {
-      Toast.show({ type: 'error', text1: t('details.save_error'), text2: error?.message || t('profile.password_change_error') });
+      Toast.show({ type: 'error', text1: t('details.save_error'), text2: getRequestErrorMessage(error, t('profile.password_change_error'), lang) });
     } finally {
       setPasswordLoading(false);
     }
@@ -161,7 +162,7 @@ export function ProfileIdentityView({ onClose }: Props) {
         Toast.show({ type: 'success', text1: t('profile.delete_account_title'), text2: t('profile.delete_account_success') });
         await signOut();
       } catch (error: any) {
-        Toast.show({ type: 'error', text1: t('details.save_error'), text2: error?.message || t('profile.delete_account_error') });
+        Toast.show({ type: 'error', text1: t('details.save_error'), text2: getRequestErrorMessage(error, t('profile.delete_account_error'), lang) });
       } finally {
         setDeleteLoading(false);
       }

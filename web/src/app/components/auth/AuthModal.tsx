@@ -1,16 +1,37 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import Script from 'next/script';
 import './AuthModal.css';
 import { Logo } from '../layout';
 import { useLanguage, type TranslationKey } from '../../../context/LanguageContext';
 import { useDialog } from '../../../context/DialogContext';
 
+declare global {
+    interface Window {
+        turnstile?: {
+            render: (container: HTMLElement, options: {
+                sitekey: string;
+                theme: 'light' | 'dark' | 'auto';
+                callback: (token: string) => void;
+                'expired-callback': () => void;
+                'error-callback': (errorCode?: string) => boolean | void;
+            }) => string | number;
+            reset: (widgetId?: string | number) => void;
+            remove?: (widgetId?: string | number) => void;
+        };
+    }
+}
+
 type AuthErrorCode =
     | 'missing_credentials'
     | 'missing_email'
+    | 'invalid_username'
     | 'user_exists'
     | 'create_auth_error'
     | 'create_profile_error'
     | 'invalid_credentials'
+    | 'login_identifier_not_found'
+    | 'captcha_invalid'
+    | 'rate_limited'
     | 'invalid_action'
     | 'server_error';
 
@@ -18,6 +39,9 @@ type AuthErrorResponse = {
     error?: string;
     errorCode?: AuthErrorCode;
     errorDetail?: string;
+    retryAfter?: number;
+    canRetryAt?: string;
+    requiresCaptcha?: boolean;
 };
 
 type AuthModalProps = {
@@ -33,19 +57,164 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
     const [recoveryEmail, setRecoveryEmail] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+    const [turnstileEnabled, setTurnstileEnabled] = useState(false);
+    const [captchaRequired, setCaptchaRequired] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState('');
+    const [turnstileErrorCode, setTurnstileErrorCode] = useState('');
+    const [turnstileReady, setTurnstileReady] = useState(false);
+    const [isLoadingTurnstileConfig, setIsLoadingTurnstileConfig] = useState(false);
+    const [currentHostname, setCurrentHostname] = useState('');
+    const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
+    const turnstileWidgetIdRef = useRef<string | number | null>(null);
+
+    const formatRetryAfter = (retryAfter?: number) => {
+        if (!retryAfter || retryAfter <= 0) {
+            return null;
+        }
+
+        const minutes = Math.floor(retryAfter / 60);
+        const seconds = retryAfter % 60;
+
+        if (minutes <= 0) {
+            return `${seconds}s`;
+        }
+
+        if (seconds === 0) {
+            return `${minutes}m`;
+        }
+
+        return `${minutes}m ${seconds}s`;
+    };
+
+    const resetCaptchaWidget = (remove = false) => {
+        setCaptchaToken('');
+        setTurnstileErrorCode('');
+
+        if (!window.turnstile || turnstileWidgetIdRef.current == null) {
+            return;
+        }
+
+        if (remove && typeof window.turnstile.remove === 'function') {
+            window.turnstile.remove(turnstileWidgetIdRef.current);
+            turnstileWidgetIdRef.current = null;
+            return;
+        }
+
+        window.turnstile.reset(turnstileWidgetIdRef.current);
+    };
+
+    const clearCaptchaState = () => {
+        setCaptchaRequired(false);
+        resetCaptchaWidget(true);
+    };
+
+    const ensureTurnstileConfig = useCallback(async () => {
+        if (turnstileEnabled || isLoadingTurnstileConfig) {
+            return;
+        }
+
+        setIsLoadingTurnstileConfig(true);
+        try {
+            const response = await fetch('/api/auth/turnstile/config', { cache: 'no-store' });
+            const payload = await response.json().catch(() => ({}));
+            const nextSiteKey = typeof payload?.siteKey === 'string' ? payload.siteKey.trim() : '';
+            const enabled = Boolean(payload?.enabled && nextSiteKey);
+            setTurnstileEnabled(enabled);
+            setTurnstileSiteKey(nextSiteKey);
+        } catch (error) {
+            console.error('[TURNSTILE CONFIG]', error);
+            setTurnstileEnabled(false);
+            setTurnstileSiteKey('');
+        } finally {
+            setIsLoadingTurnstileConfig(false);
+        }
+    }, [isLoadingTurnstileConfig, turnstileEnabled]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        setCurrentHostname(window.location.hostname);
+    }, []);
+
+    // Captcha
+    useEffect(() => {
+        // Si se requiere captcha, pero aún no tenemos la llave, la buscamos.
+        if (captchaRequired && !turnstileSiteKey) {
+            void ensureTurnstileConfig();
+        }
+    }, [captchaRequired, turnstileSiteKey, ensureTurnstileConfig]);
+
+    useEffect(() => {
+        const container = turnstileContainerRef.current;
+
+        if (!captchaRequired || !turnstileReady || !turnstileEnabled || !turnstileSiteKey || !container || !window.turnstile) {
+            return;
+        }
+
+        if (turnstileWidgetIdRef.current != null) {
+            return;
+        }
+
+        setTurnstileErrorCode('');
+        turnstileWidgetIdRef.current = window.turnstile.render(container, {
+            sitekey: turnstileSiteKey,
+            theme: 'auto',
+            callback: (token: string) => {
+                setCaptchaToken(token);
+                setTurnstileErrorCode('');
+            },
+            'expired-callback': () => setCaptchaToken(''),
+            'error-callback': (errorCode?: string) => {
+                setCaptchaToken('');
+                setTurnstileErrorCode(typeof errorCode === 'string' ? errorCode : 'unknown');
+                return true;
+            },
+        });
+
+        return () => {
+            if (turnstileWidgetIdRef.current != null && window.turnstile) {
+                window.turnstile.remove?.(turnstileWidgetIdRef.current);
+                turnstileWidgetIdRef.current = null;
+            }
+        };
+    }, [captchaRequired, turnstileEnabled, turnstileReady, turnstileSiteKey]);
+
+    useEffect(() => {
+        return () => {
+            if (window.turnstile && typeof window.turnstile.remove === 'function' && turnstileWidgetIdRef.current != null) {
+                window.turnstile.remove(turnstileWidgetIdRef.current);
+            }
+        };
+    }, []);
 
     const getAuthErrorMessage = (error: AuthErrorResponse) => {
+        if ((error.errorCode ?? error.error) === 'rate_limited') {
+            const waitTime = formatRetryAfter(error.retryAfter) ?? 'unos minutos';
+            return error.requiresCaptcha
+                ? t('auth.rate_limited_captcha', { time: waitTime })
+                : t('auth.rate_limited_wait', { time: waitTime });
+        }
+
         switch (error.errorCode) {
             case 'missing_credentials':
                 return t('auth.missing_credentials');
             case 'missing_email':
                 return t('auth.missing_email');
+            case 'invalid_username':
+                return t('auth.invalid_username');
             case 'user_exists':
                 return t('auth.user_exists');
             case 'create_auth_error':
                 return error.errorDetail ? `${t('auth.create_auth_error')}\n${error.errorDetail}` : t('auth.create_auth_error');
             case 'create_profile_error':
                 return error.errorDetail ? `${t('auth.create_profile_error')}\n${error.errorDetail}` : t('auth.create_profile_error');
+            case 'login_identifier_not_found':
+                return t('auth.login_identifier_not_found');
+            case 'captcha_invalid':
+                return t('auth.captcha_invalid');
             case 'invalid_credentials':
                 return t('auth.invalid_credentials');
             case 'invalid_action':
@@ -57,20 +226,58 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
         }
     };
 
+    const getTurnstileDiagnosticMessage = () => {
+        if (!turnstileErrorCode) {
+            return '';
+        }
+
+        if (turnstileErrorCode === '110200') {
+            return t('auth.captcha_domain_hint', { host: currentHostname || 'host actual' });
+        }
+
+        if (turnstileErrorCode === '110100' || turnstileErrorCode === '110110' || turnstileErrorCode === '400020' || turnstileErrorCode === '400070') {
+            return t('auth.captcha_config_hint');
+        }
+
+        if (turnstileErrorCode === '200500') {
+            return t('auth.captcha_network_hint');
+        }
+
+        return t('auth.captcha_unknown_hint', { code: turnstileErrorCode, host: currentHostname || 'host actual' });
+    };
+
     const submitAuth = async (payload: typeof formData, action: 'login' | 'register') => {
+        if (captchaRequired && turnstileEnabled && !captchaToken) {
+            await dialog.alert(t('auth.captcha_required'));
+            return;
+        }
+
         setIsLoading(true);
         try {
             const res = await fetch('/api/auth', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...payload, action })
+                body: JSON.stringify({
+                    ...payload,
+                    action,
+                    turnstileToken: captchaRequired ? captchaToken : undefined,
+                })
             });
-            const data = await res.json();
+            const data: AuthErrorResponse & { id?: string; username?: string; access_token?: string; refresh_token?: string } = await res.json().catch(() => ({}));
             if (!res.ok) {
+                if (data.requiresCaptcha) {
+                    setCaptchaRequired(true);
+                    void ensureTurnstileConfig();
+                }
+                if (data.errorCode === 'captcha_invalid') {
+                    setCaptchaRequired(true);
+                    resetCaptchaWidget();
+                }
                 await dialog.alert(getAuthErrorMessage(data));
                 return;
             }
-            onLogin(data.id, data.username, data.access_token, data.refresh_token);
+            clearCaptchaState();
+            onLogin(data.id ?? '', data.username ?? '', data.access_token, data.refresh_token);
         } catch (e) {
             console.error(e);
             await dialog.alert(t('auth.server_connection_error'));
@@ -85,22 +292,40 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
             return;
         }
 
+        if (captchaRequired && turnstileEnabled && !captchaToken) {
+            await dialog.alert(t('auth.captcha_required'));
+            return;
+        }
+
         setIsLoading(true);
         try {
             const res = await fetch('/api/auth/password/request', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: recoveryEmail.trim() })
+                body: JSON.stringify({
+                    email: recoveryEmail.trim(),
+                    turnstileToken: captchaRequired ? captchaToken : undefined,
+                })
             });
+            const data: AuthErrorResponse = await res.json().catch(() => ({}));
 
             if (!res.ok) {
-                await dialog.alert(t('auth.recovery_error' as TranslationKey));
+                if (data.requiresCaptcha) {
+                    setCaptchaRequired(true);
+                    void ensureTurnstileConfig();
+                }
+                if (data.errorCode === 'captcha_invalid') {
+                    setCaptchaRequired(true);
+                    resetCaptchaWidget();
+                }
+                await dialog.alert(getAuthErrorMessage(data) || t('auth.recovery_error' as TranslationKey));
                 return;
             }
 
             await dialog.alert(t('auth.recovery_sent' as TranslationKey));
             setIsRecoveryMode(false);
             setRecoveryEmail('');
+            clearCaptchaState();
         } catch (error) {
             console.error(error);
             await dialog.alert(t('auth.server_connection_error'));
@@ -127,6 +352,11 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
 
     return (
         <div className="auth-overlay">
+            <Script
+                src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+                strategy="afterInteractive"
+                onLoad={() => setTurnstileReady(true)}
+            />
             <div className="auth-box">
                 <div className="auth-logo-bar">
                     <Logo size={24} loading={isLoading} />
@@ -147,14 +377,14 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
                             <button
                                 type="button"
                                 className={`auth-toggle-opt ${!isRegister ? 'active' : ''}`}
-                                onClick={() => { setIsRegister(false); setIsRecoveryMode(false); }}
+                                onClick={() => { setIsRegister(false); setIsRecoveryMode(false); clearCaptchaState(); }}
                             >
                                 {t('auth.login_tab')}
                             </button>
                             <button
                                 type="button"
                                 className={`auth-toggle-opt ${isRegister ? 'active' : ''}`}
-                                onClick={() => { setIsRegister(true); setIsRecoveryMode(false); }}
+                                onClick={() => { setIsRegister(true); setIsRecoveryMode(false); clearCaptchaState(); }}
                             >
                                 {t('auth.register_tab')}
                             </button>
@@ -179,12 +409,12 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
                     ) : (
                         <>
                             <div className="auth-field">
-                                <span className="auth-label">{t('auth.user_id_alias')}</span>
+                                <span className="auth-label">{isRegister ? t('auth.user_id_alias') : t('auth.login_identifier_label')}</span>
                                 <div className="auth-input-wrap">
                                     <input
                                         type="text"
                                         className="auth-input"
-                                        placeholder={t('auth.username_placeholder')}
+                                        placeholder={isRegister ? t('auth.username_placeholder') : t('auth.login_identifier_placeholder')}
                                         value={formData.username}
                                         onChange={e => setFormData({ ...formData, username: e.target.value })}
                                         autoFocus
@@ -252,7 +482,7 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
                                             className="auth-forgot"
                                             onClick={() => {
                                                 setIsRecoveryMode(true);
-                                                setRecoveryEmail(formData.email);
+                                                setRecoveryEmail(formData.username.includes('@') ? formData.username : formData.email);
                                             }}
                                         >
                                             {t('auth.forgot_password')}
@@ -293,11 +523,32 @@ export const AuthModal = ({ onLogin }: AuthModalProps) => {
                     )}
 
                     <div className="auth-actions">
+                        {captchaRequired ? (
+                            <div className="auth-captcha-block">
+                                <span className="auth-label">{t('auth.captcha_label')}</span>
+                                <p className="auth-captcha-copy">{t('auth.captcha_required')}</p>
+                                <div className="auth-captcha-shell">
+                                    {turnstileEnabled ? (
+                                        <div ref={turnstileContainerRef} className="auth-turnstile" />
+                                    ) : (
+                                        <div className="auth-captcha-fallback">
+                                            {isLoadingTurnstileConfig ? t('auth.captcha_loading') : t('auth.rate_limited_wait', { time: formatRetryAfter(60) ?? 'unos minutos' })}
+                                        </div>
+                                    )}
+                                </div>
+                                {turnstileErrorCode ? (
+                                    <p className="auth-captcha-debug">
+                                        {getTurnstileDiagnosticMessage()}
+                                    </p>
+                                ) : null}
+                            </div>
+                        ) : null}
+
                         <button type="submit" className="auth-submit" disabled={isLoading}>
                             {isLoading ? t('auth.processing') : isRecoveryMode ? t('auth.recovery_send' as TranslationKey) : isRegister ? t('auth.register_action') : t('auth.authenticate_action')}
                         </button>
                         {isRecoveryMode ? (
-                            <button type="button" className="auth-submit auth-submit-secondary" disabled={isLoading} onClick={() => setIsRecoveryMode(false)}>
+                            <button type="button" className="auth-submit auth-submit-secondary" disabled={isLoading} onClick={() => { setIsRecoveryMode(false); clearCaptchaState(); }}>
                                 {t('auth.recovery_back' as TranslationKey)}
                             </button>
                         ) : null}

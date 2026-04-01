@@ -7,14 +7,26 @@ import { useDialog } from '../../context/DialogContext';
 
 const MIN_PASSWORD_LENGTH = 8;
 
-const readTokenFromLocation = (searchParams: URLSearchParams) => {
+const readRecoveryParams = (searchParams: URLSearchParams) => {
     const queryToken = searchParams.get('access_token');
-    if (queryToken) return queryToken;
+    const queryCode = searchParams.get('code');
+    if (queryToken || queryCode) {
+        return {
+            accessToken: queryToken || '',
+            code: queryCode || '',
+        };
+    }
 
-    if (typeof window === 'undefined') return '';
+    if (typeof window === 'undefined') {
+        return { accessToken: '', code: '' };
+    }
+
     const rawHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
     const hashParams = new URLSearchParams(rawHash);
-    return hashParams.get('access_token') || '';
+    return {
+        accessToken: hashParams.get('access_token') || '',
+        code: hashParams.get('code') || '',
+    };
 };
 
 export default function ResetPasswordPage() {
@@ -23,19 +35,22 @@ export default function ResetPasswordPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [accessToken, setAccessToken] = useState('');
+    const [recoveryCode, setRecoveryCode] = useState('');
     const [isReady, setIsReady] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [form, setForm] = useState({ password: '', confirmPassword: '' });
 
     useEffect(() => {
-        setAccessToken(readTokenFromLocation(searchParams));
+        const params = readRecoveryParams(searchParams);
+        setAccessToken(params.accessToken);
+        setRecoveryCode(params.code);
         setIsReady(true);
     }, [searchParams]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!accessToken) {
+        if (!accessToken && !recoveryCode) {
             await dialog.alert(t('auth.reset_invalid_link'));
             return;
         }
@@ -60,7 +75,7 @@ export default function ResetPasswordPage() {
             const res = await fetch('/api/auth/password/complete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ accessToken, password: form.password }),
+                body: JSON.stringify({ accessToken, code: recoveryCode, password: form.password }),
             });
 
             if (!res.ok) {

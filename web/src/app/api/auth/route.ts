@@ -3,7 +3,10 @@ import { randomUUID } from 'crypto';
 import { createSupabaseAuthClient, ensureAppUserProfileWithSupabase } from '../../../lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../../lib/prisma';
-import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, isSafePasswordCandidate, normalizeEmail, normalizeUsername, USERNAME_REGEX } from '../../../lib/security';
+import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, getClientIp, getRateLimitStatus, isSafePasswordCandidate, normalizeEmail, normalizeUsername, resetRateLimit, USERNAME_REGEX } from '../../../lib/security';
+import { isTurnstileEnabled, verifyTurnstileToken } from '../../../lib/turnstile';
+import { SUPPORTED_CURRENCIES } from '@safed/shared/currency';
+import type { SupportedCurrency } from '@safed/shared/types';
 
 type AuthErrorCode =
     | 'missing_credentials'
@@ -16,12 +19,35 @@ type AuthErrorCode =
     | 'create_auth_error'
     | 'create_profile_error'
     | 'invalid_credentials'
+    | 'login_identifier_not_found'
+    | 'captcha_invalid'
+    | 'rate_limited'
     | 'invalid_action'
     | 'server_error';
 
-const errorResponse = (status: number, errorCode: AuthErrorCode, errorDetail?: string) => {
-    return NextResponse.json(errorDetail ? { errorCode, errorDetail } : { errorCode }, { status });
+type AuthErrorResponseOptions = {
+    errorDetail?: string;
+    retryAfter?: number;
+    canRetryAt?: string;
+    requiresCaptcha?: boolean;
 };
+
+const errorResponse = (status: number, errorCode: AuthErrorCode, options: AuthErrorResponseOptions = {}) => {
+    const payload: Record<string, string | number | boolean> = { errorCode };
+
+    if (options.errorDetail) payload.errorDetail = options.errorDetail;
+    if (typeof options.retryAfter === 'number') payload.retryAfter = options.retryAfter;
+    if (options.canRetryAt) payload.canRetryAt = options.canRetryAt;
+    if (typeof options.requiresCaptcha === 'boolean') payload.requiresCaptcha = options.requiresCaptcha;
+
+    return NextResponse.json(payload, { status });
+};
+
+const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CURRENCIES as unknown as string[]);
+
+function isSupportedCurrency(value: unknown): value is SupportedCurrency {
+    return typeof value === 'string' && SUPPORTED_CURRENCY_SET.has(value);
+}
 
 function buildUsernameBase(username: unknown, fullName: unknown, email: string) {
     const rawBase = [username, fullName, email.split('@')[0], 'user']
@@ -72,24 +98,131 @@ async function getAuthEmailById(authId: string | null | undefined) {
     }
 }
 
+type LoginUserRecord = {
+    id: string;
+    username: string;
+    password: string;
+    monthlyGoal: number;
+    authId: string | null;
+    currency: string;
+    goalCurrency: string;
+    availableCurrencies: string[];
+};
+
+async function findLoginUser(identifier: string): Promise<{ user: LoginUserRecord | null; matchedBy: 'username' | 'auth_username' | 'full_name' | null }> {
+    const normalizedIdentifier = normalizeUsername(identifier);
+
+    const directUser = await prisma.user.findUnique({
+        where: { username: normalizedIdentifier },
+        select: {
+            id: true,
+            username: true,
+            password: true,
+            monthlyGoal: true,
+            authId: true,
+            currency: true,
+            goalCurrency: true,
+            availableCurrencies: true,
+        },
+    });
+
+    if (directUser) {
+        return { user: directUser, matchedBy: 'username' };
+    }
+
+    try {
+        const rows = await prisma.$queryRaw<Array<LoginUserRecord & { matchedBy: 'auth_username' | 'full_name' }>>`
+            select
+                u.id,
+                u.username,
+                u.password,
+                u."monthlyGoal",
+                u."authId",
+                u.currency,
+                u."goalCurrency",
+                u."availableCurrencies",
+                case
+                    when lower(coalesce(au.raw_user_meta_data ->> 'username', '')) = lower(${normalizedIdentifier}) then 'auth_username'
+                    when lower(coalesce(au.raw_user_meta_data ->> 'full_name', '')) = lower(${normalizedIdentifier}) then 'full_name'
+                    else 'full_name'
+                end as "matchedBy"
+            from public."User" u
+            join auth.users au on au.id::text = u."authId"
+            where lower(coalesce(au.raw_user_meta_data ->> 'username', '')) = lower(${normalizedIdentifier})
+               or lower(coalesce(au.raw_user_meta_data ->> 'full_name', '')) = lower(${normalizedIdentifier})
+            order by case
+                when lower(coalesce(au.raw_user_meta_data ->> 'username', '')) = lower(${normalizedIdentifier}) then 0
+                else 1
+            end
+            limit 1
+        `;
+
+        if (rows[0]) {
+            const { matchedBy, ...user } = rows[0];
+            return { user, matchedBy };
+        }
+    } catch (error) {
+        console.error('[AUTH LOGIN LOOKUP FALLBACK]', normalizedIdentifier, error);
+    }
+
+    return { user: null, matchedBy: null };
+}
+
 export async function POST(req: Request) {
     try {
         const originError = enforceSameOrigin(req);
         if (originError) return originError;
 
         const supabase = createSupabaseAuthClient();
-        const { username, email, password, fullName, monthlyGoal, action } = await req.json();
+        const {
+            username,
+            email,
+            password,
+            fullName,
+            monthlyGoal,
+            expenseGoal,
+            primaryCurrency,
+            secondaryCurrencies,
+            turnstileToken,
+            action
+        } = await req.json();
         const rawLoginIdentifier = typeof username === 'string' && username.trim().length > 0
             ? username
             : typeof email === 'string'
                 ? email
                 : '';
 
-        const rateLimitError = consumeRateLimit(req, {
+        const rateLimitOptions = {
             key: `auth:${String(action ?? 'unknown')}`,
-            limit: 10,
+            limit: 4, // 10
             windowMs: 15 * 60 * 1000,
-        });
+        };
+        const rateLimitStatus = getRateLimitStatus(req, rateLimitOptions);
+console.log("ESTADO DE MI RATE LIMIT:", rateLimitStatus);
+
+        if (rateLimitStatus.limited) {
+            const challengeToken = typeof turnstileToken === 'string' ? turnstileToken.trim() : '';
+
+            if (!isTurnstileEnabled() || !challengeToken) {
+                return errorResponse(429, 'rate_limited', {
+                    retryAfter: rateLimitStatus.retryAfter,
+                    canRetryAt: rateLimitStatus.canRetryAt ?? undefined,
+                    requiresCaptcha: isTurnstileEnabled(),
+                });
+            }
+
+            const verification = await verifyTurnstileToken(challengeToken, getClientIp(req));
+            if (!verification.ok) {
+                return errorResponse(400, 'captcha_invalid', {
+                    errorDetail: verification.errorCodes.join(', '),
+                    requiresCaptcha: true,
+                });
+            }
+
+            resetRateLimit(req, rateLimitOptions);
+        }
+
+        const rateLimitError = consumeRateLimit(req, rateLimitOptions);
         if (rateLimitError) return rateLimitError;
 
         if (!password || (action === 'login' && !rawLoginIdentifier)) {
@@ -102,11 +235,32 @@ export async function POST(req: Request) {
 
         const normalizedEmail = normalizeEmail(email);
         const normalizedUsername = normalizeUsername(username);
+        const normalizedLoginIdentifier = normalizeUsername(rawLoginIdentifier);
+        const loginLooksLikeEmail = action === 'login' && normalizedLoginIdentifier.includes('@');
         const requestedUsername = normalizedUsername.length > 0 ? normalizedUsername : null;
-        const parsedGoal = Number(monthlyGoal);
+        const parsedGoal = Number(expenseGoal ?? monthlyGoal);
         const nextMonthlyGoal = Number.isFinite(parsedGoal) && parsedGoal >= 0 && parsedGoal <= 1_000_000_000 ? parsedGoal : 0;
 
-        if (requestedUsername && !USERNAME_REGEX.test(requestedUsername)) {
+        const normalizedPrimary = typeof primaryCurrency === 'string' ? primaryCurrency.toUpperCase() : 'USD';
+        const nextPrimaryCurrency: SupportedCurrency = isSupportedCurrency(normalizedPrimary) ? normalizedPrimary : 'USD';
+
+        const normalizedSecondaryCurrencies: SupportedCurrency[] = Array.isArray(secondaryCurrencies)
+            ? Array.from(
+                new Set(
+                    secondaryCurrencies
+                        .map((c) => (typeof c === 'string' ? c.toUpperCase() : null))
+                        .filter((c): c is string => c !== null && c.length > 0)
+                        .filter((c): c is SupportedCurrency => isSupportedCurrency(c) && c !== nextPrimaryCurrency)
+                ),
+            )
+            : [];
+        const nextAvailableCurrencies = [nextPrimaryCurrency, ...normalizedSecondaryCurrencies];
+
+        if (action === 'register' && requestedUsername && !USERNAME_REGEX.test(requestedUsername)) {
+            return errorResponse(400, 'invalid_username');
+        }
+
+        if (action === 'login' && normalizedLoginIdentifier && !loginLooksLikeEmail && !USERNAME_REGEX.test(normalizedLoginIdentifier)) {
             return errorResponse(400, 'invalid_username');
         }
 
@@ -150,7 +304,7 @@ export async function POST(req: Request) {
                 if (authMessage.includes('already') || authMessage.includes('exists')) {
                     return errorResponse(400, 'email_exists');
                 }
-                return errorResponse(400, 'create_auth_error', authError?.message ?? 'Auth user creation failed');
+                return errorResponse(400, 'create_auth_error', { errorDetail: authError?.message ?? 'Auth user creation failed' });
             }
 
             const hashedPassword = await bcrypt.hash(password, 12);
@@ -170,9 +324,9 @@ export async function POST(req: Request) {
                             password: hashedPassword,
                             authId: authData.user.id,
                             monthlyGoal: nextMonthlyGoal,
-                            currency: 'USD',
-                            goalCurrency: 'USD',
-                            availableCurrencies: ['USD'],
+                            currency: nextPrimaryCurrency,
+                            goalCurrency: nextPrimaryCurrency,
+                            availableCurrencies: nextAvailableCurrencies,
                         },
                         select: { id: true, username: true, monthlyGoal: true, currency: true, goalCurrency: true, availableCurrencies: true },
                     });
@@ -193,7 +347,7 @@ export async function POST(req: Request) {
                 if (createError?.code === 'P2002' && requestedUsername) {
                     return errorResponse(400, 'user_exists');
                 }
-                return errorResponse(500, 'create_profile_error', createError?.message ?? 'User profile creation failed');
+                return errorResponse(500, 'create_profile_error', { errorDetail: createError?.message ?? 'User profile creation failed' });
             }
 
             const signIn = authData.session
@@ -218,12 +372,19 @@ export async function POST(req: Request) {
 
             if (loginLooksLikeEmail) {
                 const loginEmail = normalizeEmail(normalizedLoginIdentifier);
+                console.log("VOY A LLAMAR A SUPABASE. El captcha ya pasó o no fue necesario.");
                 const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
                     email: loginEmail,
                     password,
                 });
 
                 if (signInError || !signIn.session?.user) {
+                    if (signInError?.status === 429) {
+                        return errorResponse(429, 'rate_limited', {
+                            retryAfter: 60,
+                            requiresCaptcha: false, // true
+                        });
+                    }
                     return errorResponse(401, 'invalid_credentials');
                 }
 
@@ -241,13 +402,10 @@ export async function POST(req: Request) {
                 });
             }
 
-            const user = await prisma.user.findUnique({
-                where: { username: normalizedUsername },
-                select: { id: true, username: true, password: true, monthlyGoal: true, authId: true, currency: true, goalCurrency: true, availableCurrencies: true },
-            });
+            const { user, matchedBy } = await findLoginUser(normalizedUsername);
 
             if (!user) {
-                return errorResponse(401, 'invalid_credentials');
+                return errorResponse(404, 'login_identifier_not_found');
             }
 
             let passwordValid: boolean;
@@ -287,9 +445,16 @@ export async function POST(req: Request) {
                 email: authEmail,
                 password,
             });
+            console.log("VOY A LLAMAR A SUPABASE. El captcha ya pasó o no fue necesario.");
 
             if (signInError || !signIn?.session) {
                 console.error('Supabase signIn error:', signInError);
+                if (signInError?.status === 429) {
+                    return errorResponse(429, 'rate_limited', {
+                        retryAfter: 60,
+                        requiresCaptcha: false, // <-- CAMBIAR A FALSE
+                    });
+                }
                 return errorResponse(401, 'invalid_credentials');
             }
 
@@ -300,6 +465,7 @@ export async function POST(req: Request) {
                 currency: user.currency,
                 goalCurrency: user.goalCurrency,
                 availableCurrencies: user.availableCurrencies,
+                matchedBy,
                 access_token: signIn.session.access_token,
                 refresh_token: signIn.session.refresh_token,
             });
@@ -309,6 +475,8 @@ export async function POST(req: Request) {
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error('[AUTH GLOBAL CATCH]', message, err);
-        return errorResponse(500, 'server_error', process.env.NODE_ENV === 'development' ? `[CATCH] ${message}` : undefined);
+        return errorResponse(500, 'server_error', {
+            errorDetail: process.env.NODE_ENV === 'development' ? `[CATCH] ${message}` : undefined,
+        });
     }
 }

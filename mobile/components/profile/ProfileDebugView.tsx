@@ -21,6 +21,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Spacing, FontWeight } from '../../constants/theme';
 import { haptic } from '../../utils/haptics';
 import { apiFetch } from '../../lib/api';
+import { getRequestErrorMessage } from '../../lib/requestErrors';
 
 const MAX_IMAGES = 5;
 const IMAGE_MEDIA_TYPES: ImagePicker.MediaType[] = ['images'];
@@ -65,7 +66,7 @@ function serializeDebugError(error: any, extra: Record<string, unknown> = {}) {
 
 export function ProfileDebugView({ onClose }: Props) {
   const { theme: C } = useTheme();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const { session, user } = useAuth();
 
   const [description, setDescription] = useState('');
@@ -108,19 +109,25 @@ export function ProfileDebugView({ onClose }: Props) {
 
     setLoadingReports(true);
 
-    const response = await apiFetch('/api/debug-reports?limit=20', undefined, session);
-    const payload = await response.json().catch(() => ({}));
+    try {
+      const response = await apiFetch('/api/debug-reports?limit=20', undefined, session);
+      const payload = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      console.error(`[DebugReport] list_failed ${serializeDebugError(payload, { userId: user.id })}`);
+      if (!response.ok) {
+        console.error(`[DebugReport] list_failed ${serializeDebugError(payload, { userId: user.id })}`);
+        setReports([]);
+        return;
+      }
+
+      setReports(Array.isArray(payload?.reports) ? payload.reports : []);
+    } catch (error) {
+      console.error(`[DebugReport] list_failed ${serializeDebugError(error, { userId: user.id })}`);
       setReports([]);
+      Toast.show({ type: 'error', text1: t('mobile.debug.submit_error'), text2: getRequestErrorMessage(error, t('mobile.debug.submit_error'), lang) });
+    } finally {
       setLoadingReports(false);
-      return;
     }
-
-    setReports(Array.isArray(payload?.reports) ? payload.reports : []);
-    setLoadingReports(false);
-  }, [session, user?.id]);
+  }, [lang, session, t, user?.id]);
 
   useEffect(() => {
     void loadReports();
@@ -222,7 +229,7 @@ export function ProfileDebugView({ onClose }: Props) {
           backend: 'supabase',
         })}`,
       );
-      Toast.show({ type: 'error', text1: t('mobile.debug.submit_error'), text2: e?.message ?? undefined });
+      Toast.show({ type: 'error', text1: t('mobile.debug.submit_error'), text2: getRequestErrorMessage(e, t('mobile.debug.submit_error'), lang) });
     } finally {
       setSubmitting(false);
     }

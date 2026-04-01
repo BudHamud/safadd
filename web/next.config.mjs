@@ -30,14 +30,15 @@ const csp = [
   "default-src 'self'",
   "base-uri 'self'",
   "frame-ancestors 'none'",
+  "frame-src 'self' https://challenges.cloudflare.com",
   "object-src 'none'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   `connect-src ${connectSrc.join(' ')}`,
   "style-src 'self' 'unsafe-inline'",
   process.env.NODE_ENV === 'development'
-    ? "script-src 'self' 'unsafe-eval' 'unsafe-inline'"
-    : "script-src 'self' 'unsafe-inline'",
+    ? "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://challenges.cloudflare.com"
+    : "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
   "form-action 'self'",
   "upgrade-insecure-requests",
 ].join('; ');

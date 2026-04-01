@@ -17,6 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import { useAdminReports } from '../../context/AdminReportsContext';
 import { apiFetch } from '../../lib/api';
+import { getRequestErrorMessage } from '../../lib/requestErrors';
 import { FontWeight, Spacing } from '../../constants/theme';
 import { haptic } from '../../utils/haptics';
 
@@ -46,7 +47,7 @@ function normalizeStatus(status: string | null | undefined): 'open' | 'solved' |
 
 export function ProfileAdminReportsView({ onClose }: Props) {
   const { theme: C } = useTheme();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const { session } = useAuth();
   const dialog = useDialog();
   const { markSeen, refresh: refreshNotifications } = useAdminReports();
@@ -86,13 +87,13 @@ export function ProfileAdminReportsView({ onClose }: Props) {
         solved: Number(payload?.summary?.solved ?? 0),
         archived: Number(payload?.summary?.archived ?? 0),
       });
-    } catch {
-      setError(t('profile.admin_reports_load_error'));
+    } catch (loadError) {
+      setError(getRequestErrorMessage(loadError, t('profile.admin_reports_load_error'), lang));
       setReports([]);
     } finally {
       setLoading(false);
     }
-  }, [filter, session, t]);
+  }, [filter, lang, session, t]);
 
   useEffect(() => {
     void markSeen();
@@ -138,11 +139,11 @@ export function ProfileAdminReportsView({ onClose }: Props) {
       await Promise.all([loadReports(), refreshNotifications()]);
     } catch (updateError: any) {
       haptic.error();
-      Toast.show({ type: 'error', text1: t('details.save_error'), text2: updateError?.message ?? undefined });
+      Toast.show({ type: 'error', text1: t('details.save_error'), text2: getRequestErrorMessage(updateError, t('details.save_error'), lang) });
     } finally {
       setBusyId(null);
     }
-  }, [dialog, loadReports, refreshNotifications, session, t]);
+  }, [dialog, lang, loadReports, refreshNotifications, session, t]);
 
   const handleDelete = useCallback(async (reportId: string) => {
     if (!session) return;
@@ -170,11 +171,11 @@ export function ProfileAdminReportsView({ onClose }: Props) {
       await Promise.all([loadReports(), refreshNotifications()]);
     } catch (deleteError: any) {
       haptic.error();
-      Toast.show({ type: 'error', text1: t('details.save_error'), text2: deleteError?.message ?? undefined });
+      Toast.show({ type: 'error', text1: t('details.save_error'), text2: getRequestErrorMessage(deleteError, t('details.save_error'), lang) });
     } finally {
       setBusyId(null);
     }
-  }, [dialog, loadReports, refreshNotifications, session, t]);
+  }, [dialog, lang, loadReports, refreshNotifications, session, t]);
 
   const filterItems = useMemo(() => ([
     { key: 'open' as const, label: t('mobile.admin_reports.filter_open'), count: summary.open },

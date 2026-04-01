@@ -2,6 +2,7 @@
 // Pure functions — no platform dependencies. Works in Next.js and React Native.
 
 const DEFAULT_API_BASE = 'https://zafe.vercel.app';
+const API_REQUEST_TIMEOUT_MS = 12000;
 
 function trimTrailingSlash(value) {
   return value.endsWith('/') ? value.slice(0, -1) : value;
@@ -76,13 +77,95 @@ function buildAuthHeaders(session, extraHeaders) {
   };
 }
 
+function createTimeoutError(message) {
+  const error = new Error(message || 'request_timeout');
+  error.name = 'TimeoutError';
+  error.code = 'API_REQUEST_TIMEOUT';
+  return error;
+}
+
+function isTimeoutError(error) {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    (error.code === 'API_REQUEST_TIMEOUT' || error.name === 'TimeoutError')
+  );
+}
+
+async function fetchWithTimeout(input, init, config) {
+  const timeoutMs = Number.isFinite(config && config.timeoutMs)
+    ? Number(config.timeoutMs)
+    : API_REQUEST_TIMEOUT_MS;
+  const timeoutMessage = (config && config.timeoutMessage) || 'request_timeout';
+
+  if (timeoutMs <= 0) {
+    return fetch(input, init);
+  }
+
+  if (typeof AbortController !== 'function') {
+    return await Promise.race([
+      fetch(input, init),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(createTimeoutError(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  }
+
+  const controller = new AbortController();
+  const externalSignal = init && init.signal;
+  let timedOut = false;
+  const nextInit = {
+    ...(init || {}),
+    signal: controller.signal,
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else if (typeof externalSignal.addEventListener === 'function') {
+      externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  const timerId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(input, nextInit);
+  } catch (error) {
+    if (timedOut) {
+      throw createTimeoutError(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timerId);
+  }
+}
+
 /**
  * Fetch wrapper that injects auth headers and resolves the API base URL.
  * Equivalent to the mobile `apiFetch` helper.
  */
 async function apiFetch(path, options, session) {
+  const timeoutMs = options && typeof options.timeoutMs === 'number' ? options.timeoutMs : undefined;
+  const timeoutMessage = options && typeof options.timeoutMessage === 'string' ? options.timeoutMessage : undefined;
+  const nextOptions = options ? { ...options } : {};
+  delete nextOptions.timeoutMs;
+  delete nextOptions.timeoutMessage;
+
   const headers = buildAuthHeaders(session || null, (options || {}).headers);
-  return fetch(`${getApiBase()}${path}`, { ...(options || {}), headers });
+  return fetchWithTimeout(`${getApiBase()}${path}`, { ...nextOptions, headers }, { timeoutMs, timeoutMessage });
 }
 
-module.exports = { DEFAULT_API_BASE, getApiBase, buildAuthHeaders, apiFetch };
+module.exports = {
+  API_REQUEST_TIMEOUT_MS,
+  DEFAULT_API_BASE,
+  getApiBase,
+  buildAuthHeaders,
+  createTimeoutError,
+  isTimeoutError,
+  fetchWithTimeout,
+  apiFetch,
+};

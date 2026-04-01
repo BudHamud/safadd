@@ -20,6 +20,33 @@ type DebugReportRow = {
   archived_at: Date | string | null;
 };
 
+function isMissingDebugReportsRelation(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+
+  const maybeCode = 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+  const maybeMeta = 'meta' in error ? (error as { meta?: unknown }).meta : null;
+  const maybeMessage = error instanceof Error ? error.message : String(error);
+
+  const metaMessage = maybeMeta && typeof maybeMeta === 'object' && 'message' in maybeMeta
+    ? String((maybeMeta as { message?: unknown }).message ?? '')
+    : '';
+
+  return (
+    maybeCode === 'P2010' &&
+    (maybeMessage.includes('public.debug_reports') || metaMessage.includes('public.debug_reports'))
+  );
+}
+
+function missingDebugReportsResponse() {
+  return NextResponse.json(
+    {
+      error: 'La tabla public.debug_reports no existe en esta base. Ejecuta apps/safadd/supabase/debug_reports_rls.sql en Supabase SQL Editor.',
+      setupRequired: 'debug_reports_rls.sql',
+    },
+    { status: 500 },
+  );
+}
+
 function normalizeBase64(value: unknown) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -341,6 +368,9 @@ export async function GET(req: Request) {
     });
   } catch (reportsError) {
     console.error('[DEBUG_REPORTS GET] list error:', reportsError);
+    if (isMissingDebugReportsRelation(reportsError)) {
+      return missingDebugReportsResponse();
+    }
     return NextResponse.json({ error: reportsError.message ?? 'No se pudieron cargar los reportes' }, { status: 500 });
   }
 
@@ -349,7 +379,18 @@ export async function GET(req: Request) {
   const signedUrlMap = isAdminScope
     ? await buildSignedImageUrls(supabase, (reports ?? []) as Array<{ id: string; user_id: string; images_count: number | null }>)
     : new Map<string, string[]>();
-  const summary = isAdminScope ? await getAdminSummary() : undefined;
+  let summary = undefined as Awaited<ReturnType<typeof getAdminSummary>> | undefined;
+  if (isAdminScope) {
+    try {
+      summary = await getAdminSummary();
+    } catch (summaryError) {
+      console.error('[DEBUG_REPORTS GET] summary error:', summaryError);
+      if (isMissingDebugReportsRelation(summaryError)) {
+        return missingDebugReportsResponse();
+      }
+      return NextResponse.json({ error: 'No se pudo cargar el resumen de reportes' }, { status: 500 });
+    }
+  }
 
   return NextResponse.json({
     reports: (reports ?? []).map((report) => ({
@@ -435,6 +476,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ id: report.id, success: true, uploadedImages });
   } catch (routeError) {
     console.error('[DEBUG_REPORTS POST] unexpected error:', routeError);
+    if (isMissingDebugReportsRelation(routeError)) {
+      return missingDebugReportsResponse();
+    }
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 });
   }
 }
@@ -475,6 +519,9 @@ export async function PUT(req: Request) {
     data = await updateReport(reportId, updatePayload);
   } catch (updateError) {
     console.error('[DEBUG_REPORTS PUT] update error:', updateError);
+    if (isMissingDebugReportsRelation(updateError)) {
+      return missingDebugReportsResponse();
+    }
     return NextResponse.json({ error: updateError.message ?? 'No se pudo actualizar el reporte' }, { status: 500 });
   }
 
@@ -507,6 +554,9 @@ export async function DELETE(req: Request) {
   try {
     report = await getReportForDelete(reportId);
   } catch (reportError) {
+    if (isMissingDebugReportsRelation(reportError)) {
+      return missingDebugReportsResponse();
+    }
     return NextResponse.json({ error: reportError.message ?? 'Reporte no encontrado' }, { status: 500 });
   }
 
@@ -527,6 +577,9 @@ export async function DELETE(req: Request) {
     await deleteReport(reportId);
   } catch (deleteError) {
     console.error('[DEBUG_REPORTS DELETE] delete error:', deleteError);
+    if (isMissingDebugReportsRelation(deleteError)) {
+      return missingDebugReportsResponse();
+    }
     return NextResponse.json({ error: deleteError.message ?? 'No se pudo borrar el reporte' }, { status: 500 });
   }
 

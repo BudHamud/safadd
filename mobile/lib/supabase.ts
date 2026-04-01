@@ -1,6 +1,8 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
-import { secureAuthStorage } from './secureAuthStorage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fetchWithTimeout, isTimeoutError } from './api';
+import { reportClientError } from './clientErrorReporter';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -51,12 +53,38 @@ function resolveSupabaseConfigError() {
 
 export const supabaseConfigError = resolveSupabaseConfigError();
 
+const supabaseTimeoutFetch: typeof fetch = async (input, init) => {
+  try {
+    return await fetchWithTimeout(input, init);
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      await reportClientError(error, {
+        context: 'supabase_request_timeout',
+        metadata: {
+          method: init?.method ?? 'GET',
+          url: typeof input === 'string' ? input : input instanceof Request ? input.url : String(input),
+        },
+      });
+    }
+
+    throw error;
+  }
+};
+
 export const supabase = createClient(supabaseUrl || 'https://invalid-project.supabase.co', supabaseAnonKey || 'invalid.key.placeholder', {
   auth: {
-    storage: secureAuthStorage,
+    // Persist auth session in AsyncStorage (required by the registration flow).
+    storage: {
+      getItem: async (key: string) => AsyncStorage.getItem(key),
+      setItem: async (key: string, value: string) => AsyncStorage.setItem(key, value),
+      removeItem: async (key: string) => AsyncStorage.removeItem(key),
+    },
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+  },
+  global: {
+    fetch: supabaseTimeoutFetch,
   },
 });
 

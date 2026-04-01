@@ -9,8 +9,16 @@ const authUserEndpoint = new URL('/auth/v1/user', supabaseUrl).toString();
 const authSignOutEndpoint = new URL('/auth/v1/logout?scope=global', supabaseUrl).toString();
 const appUserProfileSelect = 'id,username,role,monthlyGoal,createdAt,authId,currency,goalCurrency,availableCurrencies';
 
-export const createSupabaseAuthClient = () => createClient(supabaseUrl, supabaseAnonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
+type CreateSupabaseAuthClientOptions = {
+    flowType?: 'implicit' | 'pkce';
+};
+
+export const createSupabaseAuthClient = (options: CreateSupabaseAuthClientOptions = {}) => createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        flowType: options.flowType,
+    },
 });
 
 export const createAuthenticatedSupabaseClient = (accessToken: string) => createClient(supabaseUrl, supabaseAnonKey, {

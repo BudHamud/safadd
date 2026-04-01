@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-type RateLimitOptions = {
+export type RateLimitOptions = {
     key: string;
     limit: number;
     windowMs: number;
@@ -74,6 +74,77 @@ export const normalizeEmail = (value: unknown) =>
 
 export const normalizeUsername = (value: unknown) =>
     typeof value === 'string' ? value.trim() : '';
+
+const parseOriginCandidate = (value: string | null | undefined) => {
+    if (!value) return null;
+
+    const candidate = value.split(',')[0]?.trim();
+    if (!candidate) return null;
+
+    try {
+        const url = new URL(candidate);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            return null;
+        }
+
+        return url.origin;
+    } catch {
+        return null;
+    }
+};
+
+const buildOriginFromParts = (protocol: string | null | undefined, host: string | null | undefined) => {
+    const normalizedProtocol = protocol?.split(',')[0]?.trim();
+    const normalizedHost = host?.split(',')[0]?.trim();
+
+    if (!normalizedProtocol || !normalizedHost) {
+        return null;
+    }
+
+    return parseOriginCandidate(`${normalizedProtocol}://${normalizedHost}`);
+};
+
+const isLoopbackHostname = (hostname: string) => {
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
+};
+
+const areEquivalentOrigins = (left: string, right: string) => {
+    if (left === right) {
+        return true;
+    }
+
+    try {
+        const leftUrl = new URL(left);
+        const rightUrl = new URL(right);
+
+        return (
+            leftUrl.protocol === rightUrl.protocol
+            && leftUrl.port === rightUrl.port
+            && isLoopbackHostname(leftUrl.hostname)
+            && isLoopbackHostname(rightUrl.hostname)
+        );
+    } catch {
+        return false;
+    }
+};
+
+export function getAppOrigin(req: Request) {
+    const configuredOrigin = parseOriginCandidate(process.env.NEXT_PUBLIC_APP_URL);
+    if (configuredOrigin) {
+        return configuredOrigin;
+    }
+
+    const forwardedOrigin = buildOriginFromParts(
+        req.headers.get('x-forwarded-proto'),
+        req.headers.get('x-forwarded-host') ?? req.headers.get('host'),
+    );
+
+    if (forwardedOrigin) {
+        return forwardedOrigin;
+    }
+
+    return new URL(req.url).origin;
+}
 
 export const isSafePasswordCandidate = (value: unknown) =>
     typeof value === 'string' && value.length >= 8 && value.length <= 128;
@@ -283,11 +354,47 @@ export function getClientIp(req: Request) {
     return req.headers.get('x-real-ip') ?? 'unknown';
 }
 
+const getRateLimitKey = (req: Request, options: RateLimitOptions) => {
+    const ip = getClientIp(req);
+    return `${options.key}:${ip}`;
+};
+
+export function getRateLimitStatus(req: Request, options: RateLimitOptions) {
+    const now = Date.now();
+    const rateKey = getRateLimitKey(req, options);
+    const current = rateLimitStore.get(rateKey);
+
+    if (!current || current.resetAt <= now) {
+        return {
+            limited: false,
+            retryAfter: 0,
+            canRetryAt: null,
+        };
+    }
+
+    if (current.count >= options.limit) {
+        return {
+            limited: true,
+            retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+            canRetryAt: new Date(current.resetAt).toISOString(),
+        };
+    }
+
+    return {
+        limited: false,
+        retryAfter: 0,
+        canRetryAt: null,
+    };
+}
+
+export function resetRateLimit(req: Request, options: RateLimitOptions) {
+    rateLimitStore.delete(getRateLimitKey(req, options));
+}
+
 export function enforceSameOrigin(req: Request) {
     const origin = req.headers.get('origin')?.trim();
     if (!origin || origin === 'null') return null;
 
-    const requestOrigin = new URL(req.url).origin;
     try {
         const parsedOrigin = new URL(origin);
 
@@ -295,7 +402,18 @@ export function enforceSameOrigin(req: Request) {
             return null;
         }
 
-        if (parsedOrigin.origin !== requestOrigin) {
+        const allowedOrigins = [
+            new URL(req.url).origin,
+            getAppOrigin(req),
+            buildOriginFromParts(
+                req.headers.get('x-forwarded-proto'),
+                req.headers.get('x-forwarded-host') ?? req.headers.get('host'),
+            ),
+        ].filter((value): value is string => Boolean(value));
+
+        const isAllowed = allowedOrigins.some((allowedOrigin) => areEquivalentOrigins(parsedOrigin.origin, allowedOrigin));
+
+        if (!isAllowed) {
             return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
         }
     } catch {
@@ -306,9 +424,8 @@ export function enforceSameOrigin(req: Request) {
 }
 
 export function consumeRateLimit(req: Request, options: RateLimitOptions) {
-    const ip = getClientIp(req);
     const now = Date.now();
-    const rateKey = `${options.key}:${ip}`;
+    const rateKey = getRateLimitKey(req, options);
     const current = rateLimitStore.get(rateKey);
 
     if (!current || current.resetAt <= now) {
@@ -319,7 +436,13 @@ export function consumeRateLimit(req: Request, options: RateLimitOptions) {
     if (current.count >= options.limit) {
         const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
         return NextResponse.json(
-            { error: 'rate_limited', retryAfter: retryAfterSeconds },
+            {
+                error: 'rate_limited',
+                errorCode: 'rate_limited',
+                retryAfter: retryAfterSeconds,
+                canRetryAt: new Date(current.resetAt).toISOString(),
+                requiresCaptcha: true,
+            },
             {
                 status: 429,
                 headers: {

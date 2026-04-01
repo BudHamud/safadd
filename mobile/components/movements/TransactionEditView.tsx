@@ -21,6 +21,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { apiFetch } from '../../lib/api';
+import { getRequestErrorMessage } from '../../lib/requestErrors';
 import { supabase } from '../../lib/supabase';
 import { Spacing, FontSize, FontWeight } from '../../constants/theme';
 import { haptic } from '../../utils/haptics';
@@ -385,9 +386,7 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
     } catch (error) {
       const message = error instanceof Error && error.message === 'scan_file_read_failed'
         ? t('order.scan_error')
-        : error instanceof Error
-          ? error.message
-          : t('order.scan_error');
+        : getRequestErrorMessage(error, t('order.scan_error'), lang);
       Toast.show({ type: 'error', text1: t('order.scan_read_error_prefix'), text2: message });
       if (!scanPreviewUri) setScanPreviewUri(null);
     } finally {
@@ -575,7 +574,7 @@ export function TransactionEditView({ tx, initialData, categories, userId, onSav
               <Text style={[styles.label, { color: C.textMuted }]}>{t('order.period_frequency').toUpperCase()}</Text>
               <View style={styles.periodRow}>
                 {PERIOD_OPTIONS.map((value) => {
-                  const active = periodicity === value;
+                  const active = !usesCustomPeriodicity && periodicity === value;
                   return (
                     <TouchableOpacity
                       key={value}

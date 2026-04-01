@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { Session, User as AuthUser } from '@supabase/supabase-js';
 import { supabase, supabaseConfigError } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
+import { reportClientError } from '../lib/clientErrorReporter';
 import { getItemWithLegacyKey } from '../lib/storage';
 import { Profile, WebUser } from '../types';
 import type { SupportedCurrency } from '@safed/shared/types';
@@ -64,6 +65,68 @@ function resolveCurrencyPreferences(input: {
   };
 }
 
+const NON_REPORTABLE_AUTH_ERROR_FRAGMENTS = [
+  'already exists',
+  'already registered',
+  'captcha_invalid',
+  'email_exists',
+  'invalid_credentials',
+  'invalid_email',
+  'login_identifier_not_found',
+  'missing_credentials',
+  'password should be',
+  'rate_limited',
+  'too many requests',
+  'user not found',
+  'user_exists',
+  'weak_password',
+];
+
+type StructuredAuthError = Error & {
+  code?: string;
+  retryAfter?: number;
+  requiresCaptcha?: boolean;
+  canRetryAt?: string;
+};
+
+function createStructuredAuthError(payload: any, fallbackCode: string): StructuredAuthError {
+  const code = String(payload?.errorCode || payload?.error || fallbackCode);
+  const error = new Error(code) as StructuredAuthError;
+
+  error.code = code;
+
+  if (typeof payload?.retryAfter === 'number') {
+    error.retryAfter = payload.retryAfter;
+  }
+
+  if (typeof payload?.requiresCaptcha === 'boolean') {
+    error.requiresCaptcha = payload.requiresCaptcha;
+  }
+
+  if (typeof payload?.canRetryAt === 'string' && payload.canRetryAt.trim()) {
+    error.canRetryAt = payload.canRetryAt;
+  }
+
+  return error;
+}
+
+function shouldReportAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return !NON_REPORTABLE_AUTH_ERROR_FRAGMENTS.some((fragment) => message.includes(fragment));
+}
+
+async function reportAuthError(error: unknown, userEmail: string | undefined, context: string) {
+  if (!shouldReportAuthError(error)) return;
+
+  await reportClientError(error, {
+    context,
+    userEmail,
+    metadata: {
+      flow: 'auth',
+    },
+  });
+}
+
 type AuthContextType = {
   session: Session | null;
   user: AuthUser | null;      // Supabase auth user (auth.users)
@@ -72,7 +135,14 @@ type AuthContextType = {
   loading: boolean;
   configError: string | null;
   signIn: (identifier: string, password: string) => Promise<{ error: any | null }>;
-  signUp: (email: string, password: string, fullName?: string, monthlyGoal?: number) => Promise<{ error: any | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName?: string,
+    expenseGoal?: number,
+    primaryCurrency?: SupportedCurrency,
+    secondaryCurrencies?: SupportedCurrency[],
+  ) => Promise<{ error: any | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   currency: SupportedCurrency;
@@ -310,6 +380,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     if (normalizedIdentifier.includes('@')) {
       const { error } = await supabase.auth.signInWithPassword({ email: normalizedIdentifier.toLowerCase(), password });
+      if (error) {
+        await reportAuthError(error, normalizedIdentifier.toLowerCase(), 'auth_signin_email');
+      }
       return { error };
     }
 
@@ -322,24 +395,39 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        return { error: new Error(String(payload?.errorCode || payload?.error || 'invalid_credentials')) };
+        const authError = createStructuredAuthError(payload, 'invalid_credentials');
+        await reportAuthError(authError, undefined, 'auth_signin_username');
+        return { error: authError };
       }
 
       if (!payload?.access_token || !payload?.refresh_token) {
-        return { error: new Error('username_login_session_unavailable') };
+        const sessionError = new Error('username_login_session_unavailable');
+        await reportAuthError(sessionError, undefined, 'auth_signin_username');
+        return { error: sessionError };
       }
 
       const { error } = await supabase.auth.setSession({
         access_token: payload.access_token,
         refresh_token: payload.refresh_token,
       });
+      if (error) {
+        await reportAuthError(error, undefined, 'auth_signin_username');
+      }
       return { error };
     } catch (error) {
+      await reportAuthError(error, undefined, 'auth_signin_username');
       return { error };
     }
   };
 
-  const handleSignUp = async (email: string, password: string, fullName?: string, monthlyGoal?: number) => {
+  const handleSignUp = async (
+    email: string,
+    password: string,
+    fullName?: string,
+    expenseGoal?: number,
+    primaryCurrency?: SupportedCurrency,
+    secondaryCurrencies?: SupportedCurrency[],
+  ) => {
     if (supabaseConfigError) {
       return { error: new Error(supabaseConfigError) };
     }
@@ -353,17 +441,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           email: email.trim().toLowerCase(),
           password,
           fullName: fullName?.trim() || undefined,
-          monthlyGoal: Number.isFinite(monthlyGoal) && (monthlyGoal ?? 0) >= 0 ? monthlyGoal : 0,
+          monthlyGoal: Number.isFinite(expenseGoal) && (expenseGoal ?? 0) >= 0 ? expenseGoal : 0,
+          expenseGoal: Number.isFinite(expenseGoal) && (expenseGoal ?? 0) >= 0 ? expenseGoal : 0,
+          primaryCurrency: primaryCurrency ?? DEFAULT_CURRENCY,
+          secondaryCurrencies: Array.isArray(secondaryCurrencies) ? secondaryCurrencies : [],
         }),
       });
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        return { error: new Error(String(payload?.errorCode || payload?.error || 'register_failed')) };
+        const registrationError = createStructuredAuthError(payload, 'register_failed');
+        await reportAuthError(registrationError, email.trim().toLowerCase(), 'auth_register');
+        return { error: registrationError };
       }
 
       if (!payload?.access_token || !payload?.refresh_token) {
-        return { error: new Error('registration_session_unavailable') };
+        const sessionError = new Error('registration_session_unavailable');
+        await reportAuthError(sessionError, email.trim().toLowerCase(), 'auth_register');
+        return { error: sessionError };
       }
 
       const { error } = await supabase.auth.setSession({
@@ -372,16 +467,22 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       });
 
       if (error) {
+        await reportAuthError(error, email.trim().toLowerCase(), 'auth_register');
         return { error };
       }
 
     } catch (error) {
+      await reportAuthError(error, email.trim().toLowerCase(), 'auth_register');
       return { error };
     }
 
-    const defaultPrefs = { currency: DEFAULT_CURRENCY, goalCurrency: DEFAULT_CURRENCY, availableCurrencies: [DEFAULT_CURRENCY] };
-    applyCurrencyPreferences(defaultPrefs);
-    await persistCurrencyPreferencesLocally(defaultPrefs);
+    const safePrimary = primaryCurrency ?? DEFAULT_CURRENCY;
+    const safeSecondary = Array.isArray(secondaryCurrencies) ? secondaryCurrencies.filter((c) => c !== safePrimary) : [];
+    const availableCurrencies = Array.from(new Set([safePrimary, ...safeSecondary]));
+
+    const prefs = { currency: safePrimary, goalCurrency: safePrimary, availableCurrencies };
+    applyCurrencyPreferences(prefs);
+    await persistCurrencyPreferencesLocally(prefs);
 
     return { error: null };
   };

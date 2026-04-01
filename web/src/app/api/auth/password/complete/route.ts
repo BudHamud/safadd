@@ -16,8 +16,8 @@ export async function POST(req: Request) {
         });
         if (rateLimitError) return rateLimitError;
 
-        const { accessToken, password } = await req.json();
-        if (!accessToken || !password) {
+        const { accessToken, code, password } = await req.json();
+        if ((!accessToken && !code) || !password) {
             return NextResponse.json({ error: 'missing_fields' }, { status: 400 });
         }
 
@@ -26,16 +26,32 @@ export async function POST(req: Request) {
         }
 
         const supabase = createSupabaseAuthClient();
+        let token = typeof accessToken === 'string' ? accessToken.trim() : '';
+
+        if (!token && typeof code === 'string' && code.trim()) {
+            const {
+                data: exchangeData,
+                error: exchangeError,
+            } = await supabase.auth.exchangeCodeForSession(code.trim());
+
+            if (exchangeError || !exchangeData.session?.access_token) {
+                console.error('[AUTH PASSWORD COMPLETE] exchange code error', exchangeError);
+                return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
+            }
+
+            token = exchangeData.session.access_token;
+        }
+
         const {
             data: { user },
             error: getUserError,
-        } = await supabase.auth.getUser(accessToken);
+        } = await supabase.auth.getUser(token);
 
         if (getUserError || !user) {
             return NextResponse.json({ error: 'invalid_token' }, { status: 401 });
         }
 
-        const { error: updateAuthError } = await updateAuthenticatedSupabaseUser(accessToken, { password });
+        const { error: updateAuthError } = await updateAuthenticatedSupabaseUser(token, { password });
 
         if (updateAuthError) {
             console.error('[AUTH PASSWORD COMPLETE] update auth error', updateAuthError);

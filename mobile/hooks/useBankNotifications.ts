@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState } from 'react';
 import RNAndroidNotificationListener from 'react-native-android-notification-listener';
 import { AppState, Platform } from 'react-native';
-import { getApiBase } from '../lib/api';
+import { fetchWithTimeout, getApiBase } from '../lib/api';
 
 const notificationListenerModule = RNAndroidNotificationListener;
 const isNotificationListenerAvailable =
@@ -105,7 +105,7 @@ export function useBankNotifications({
         if (!isNotificationListenerAvailable) return;
         if (!userId || !accessToken) return;
         try {
-            const res = await fetch(`${apiBase}/api/parse-notification`, {
+            const res = await fetchWithTimeout(`${apiBase}/api/parse-notification`, {
                 headers: buildHeaders(),
             });
             const data = await res.json();
@@ -136,7 +136,7 @@ export function useBankNotifications({
 
         setProcessing(true);
         try {
-            const res = await fetch(`${apiBase}/api/parse-notification`, {
+            const res = await fetchWithTimeout(`${apiBase}/api/parse-notification`, {
                 method: 'POST',
                 headers: buildHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ packageName, title, body: text }),
@@ -171,7 +171,7 @@ export function useBankNotifications({
 
     const dismissPending = useCallback(async (pendingId: string) => {
         try {
-            await fetch(`${apiBase}/api/parse-notification?id=${pendingId}`, { method: 'DELETE', headers: buildHeaders() });
+            await fetchWithTimeout(`${apiBase}/api/parse-notification?id=${pendingId}`, { method: 'DELETE', headers: buildHeaders() });
             setPending(prev => prev.filter(p => p.id !== pendingId));
         } catch (e) {}
     }, [apiBase, buildHeaders]);

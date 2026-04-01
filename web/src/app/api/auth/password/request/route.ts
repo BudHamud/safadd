@@ -1,20 +1,49 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseAuthClient } from '../../../../../lib/supabase-server';
-import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, normalizeEmail } from '../../../../../lib/security';
+import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, getAppOrigin, getClientIp, getRateLimitStatus, normalizeEmail, resetRateLimit } from '../../../../../lib/security';
+import { isTurnstileEnabled, verifyTurnstileToken } from '../../../../../lib/turnstile';
 
 export async function POST(req: Request) {
     try {
         const originError = enforceSameOrigin(req);
         if (originError) return originError;
 
-        const rateLimitError = consumeRateLimit(req, {
+        const { email, turnstileToken } = await req.json();
+        const rateLimitOptions = {
             key: 'auth:password-request',
             limit: 5,
             windowMs: 15 * 60 * 1000,
-        });
-        if (rateLimitError) return rateLimitError;
+        };
+        const rateLimitStatus = getRateLimitStatus(req, rateLimitOptions);
 
-        const { email } = await req.json();
+        if (rateLimitStatus.limited) {
+            const challengeToken = typeof turnstileToken === 'string' ? turnstileToken.trim() : '';
+
+            if (!isTurnstileEnabled() || !challengeToken) {
+                return NextResponse.json({
+                    error: 'rate_limited',
+                    errorCode: 'rate_limited',
+                    retryAfter: rateLimitStatus.retryAfter,
+                    canRetryAt: rateLimitStatus.canRetryAt,
+                    requiresCaptcha: isTurnstileEnabled(),
+                }, { status: 429 });
+            }
+
+            const verification = await verifyTurnstileToken(challengeToken, getClientIp(req));
+            if (!verification.ok) {
+                return NextResponse.json({
+                    error: 'captcha_invalid',
+                    errorCode: 'captcha_invalid',
+                    errorDetail: verification.errorCodes.join(', '),
+                    requiresCaptcha: true,
+                }, { status: 400 });
+            }
+
+            resetRateLimit(req, rateLimitOptions);
+        }
+
+        const rateLimitError = consumeRateLimit(req, rateLimitOptions);
+        if (rateLimitError) return rateLimitError;
         const normalizedEmail = normalizeEmail(email);
 
         if (!normalizedEmail) {
@@ -25,8 +54,8 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'invalid_email' }, { status: 400 });
         }
 
-        const supabase = createSupabaseAuthClient();
-        const redirectTo = `${new URL(req.url).origin}/reset-password`;
+        const supabase = createSupabaseAuthClient({ flowType: 'implicit' });
+        const redirectTo = `${getAppOrigin(req)}/reset-password`;
         const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
 
         if (error) {
