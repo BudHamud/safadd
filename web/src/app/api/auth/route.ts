@@ -7,6 +7,7 @@ import { consumeRateLimit, EMAIL_REGEX, enforceSameOrigin, getClientIp, getRateL
 import { isTurnstileEnabled, verifyTurnstileToken } from '../../../lib/turnstile';
 import { SUPPORTED_CURRENCIES } from '@safed/shared/currency';
 import type { SupportedCurrency } from '@safed/shared/types';
+import { clampAvailableCurrenciesForPlan } from '../../../lib/plan';
 
 type AuthErrorCode =
     | 'missing_credentials'
@@ -194,11 +195,10 @@ export async function POST(req: Request) {
 
         const rateLimitOptions = {
             key: `auth:${String(action ?? 'unknown')}`,
-            limit: 4, // 10
+            limit: 10,
             windowMs: 15 * 60 * 1000,
         };
         const rateLimitStatus = getRateLimitStatus(req, rateLimitOptions);
-console.log("ESTADO DE MI RATE LIMIT:", rateLimitStatus);
 
         if (rateLimitStatus.limited) {
             const challengeToken = typeof turnstileToken === 'string' ? turnstileToken.trim() : '';
@@ -254,7 +254,11 @@ console.log("ESTADO DE MI RATE LIMIT:", rateLimitStatus);
                 ),
             )
             : [];
-        const nextAvailableCurrencies = [nextPrimaryCurrency, ...normalizedSecondaryCurrencies];
+        const nextAvailableCurrencies = clampAvailableCurrenciesForPlan(
+            [nextPrimaryCurrency, ...normalizedSecondaryCurrencies],
+            nextPrimaryCurrency,
+            'free',
+        );
 
         if (action === 'register' && requestedUsername && !USERNAME_REGEX.test(requestedUsername)) {
             return errorResponse(400, 'invalid_username');
@@ -372,7 +376,6 @@ console.log("ESTADO DE MI RATE LIMIT:", rateLimitStatus);
 
             if (loginLooksLikeEmail) {
                 const loginEmail = normalizeEmail(normalizedLoginIdentifier);
-                console.log("VOY A LLAMAR A SUPABASE. El captcha ya pasó o no fue necesario.");
                 const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
                     email: loginEmail,
                     password,
@@ -445,7 +448,6 @@ console.log("ESTADO DE MI RATE LIMIT:", rateLimitStatus);
                 email: authEmail,
                 password,
             });
-            console.log("VOY A LLAMAR A SUPABASE. El captcha ya pasó o no fue necesario.");
 
             if (signInError || !signIn?.session) {
                 console.error('Supabase signIn error:', signInError);

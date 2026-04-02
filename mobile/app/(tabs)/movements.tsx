@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronDown, SlidersHorizontal, Search, X, ArrowUpDown, Crown } from 'lucide-react-native';
+import { ChevronDown, SlidersHorizontal, Search, X } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useMovementsLogic } from '../../hooks/useMovementsLogic';
@@ -15,7 +15,6 @@ import { TxCard } from '../../components/movements/TxCard';
 import { TransactionEditView } from '../../components/movements/TransactionEditView';
 import { TransactionDetailsView } from '../../components/movements/TransactionDetailsView';
 import { useLanguage } from '../../context/LanguageContext';
-import { useDialog } from '../../context/DialogContext';
 import { Transaction } from '../../types';
 import { formatAmount, formatMonthLabel, parseDateValue } from '../../lib/locale';
 import { Spacing, FontSize, FontWeight } from '../../constants/theme';
@@ -31,7 +30,6 @@ export default function MovementsScreen() {
   const { webUser, currency, profile } = useAuth();
   const { theme: C } = useTheme();
   const { lang, t } = useLanguage();
-  const dialog = useDialog();
   const sym = getCurrencySymbol(currency);
   const monthFormatter = new Intl.DateTimeFormat(lang === 'en' ? 'en-US' : 'es-AR', { month: 'short' });
 
@@ -47,6 +45,7 @@ export default function MovementsScreen() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Transaction | null>(null);
   const [showPeriodModal, setShowPeriodModal] = useState(false);
+  const [showInsightsModal, setShowInsightsModal] = useState(false);
   const [visibleCount, setVisibleCount] = useState(10);
   const monthlyGoal = useDisplayGoalAmount(profile?.monthly_goal ?? 0);
 
@@ -59,8 +58,11 @@ export default function MovementsScreen() {
 
   const totalIncome = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const totalExpense = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const expenseForGoal = filtered
+    .filter((tx) => tx.type === 'expense' && !tx.excludeFromBudget)
+    .reduce((sum, tx) => sum + tx.amount, 0);
   const totalBalance = totalIncome - totalExpense;
-  const expenseGoalPct = monthlyGoal > 0 ? Math.min((totalExpense / monthlyGoal) * 100, 100) : 0;
+  const expenseGoalPct = monthlyGoal > 0 ? Math.min((expenseForGoal / monthlyGoal) * 100, 100) : 0;
   const monthBadge = `${monthFormatter.format(new Date(filters.year, filters.month, 1)).replace('.', '').toUpperCase()} ${filters.year}`;
   const periodLabel = filters.scope === 'historical'
     ? t('movements.historical').toUpperCase()
@@ -94,27 +96,11 @@ export default function MovementsScreen() {
       .slice(0, 3);
   }, [filtered, t]);
   const topCategoryMax = topCategories[0]?.[1] ?? 0;
-  const role = webUser?.role?.toLowerCase() ?? '';
-  const canUseExcelImport = role === 'admin' || role === 'premium';
-
-  const handlePremiumImportExport = async () => {
-    if (!canUseExcelImport) {
-      await dialog.alert(
-        lang === 'es'
-          ? 'La importacion de Excel esta disponible solo para usuarios premium o administradores.'
-          : 'Excel import is available only for premium users or administrators.',
-        `${t('landing.card_label')} · ${t('movements.import_excel')}`
-      );
-      return;
-    }
-
-    await dialog.alert(
-      lang === 'es'
-        ? 'La importacion de Excel para mobile todavia no esta habilitada, pero el acceso ya quedo restringido a premium y admin.'
-        : 'Mobile Excel import is not enabled yet, but access is now restricted to premium and admin users.',
-      `${t('landing.card_label')} · ${t('movements.import_excel')}`
-    );
-  };
+  const headerProgressPct = filters.scope === 'month'
+    ? expenseGoalPct
+    : totalIncome > 0
+      ? Math.min((totalExpense / totalIncome) * 100, 100)
+      : (totalExpense > 0 ? 100 : 0);
 
   const handleEditTx = (tx: Transaction) => {
     setSelectedTx(null);
@@ -144,16 +130,32 @@ export default function MovementsScreen() {
           <Text style={[styles.headerMeta, { color: C.primary }]}>{periodLabel}</Text>
         </View>
         <View style={styles.headerActions}>
-          {canUseExcelImport ? (
-            <TouchableOpacity
-              style={[styles.premiumBtn, { backgroundColor: C.surface, borderColor: C.border }]}
-              onPress={() => void handlePremiumImportExport()}
-              activeOpacity={0.85}
-              accessibilityLabel={`${t('movements.import_excel')} ${t('landing.card_label')}`}
-            >
-              <Crown size={16} color={C.primary} />
-            </TouchableOpacity>
-          ) : null}
+          <TouchableOpacity
+            style={[styles.insightsButton, { backgroundColor: C.surface, borderColor: C.border }]}
+            onPress={() => {
+              haptic.selection();
+              setShowInsightsModal(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <View style={styles.insightsMiniChart}>
+              <Svg width={30} height={30} viewBox="0 0 40 40">
+                <Circle cx={20} cy={20} r={14} fill="none" stroke={C.borderDim} strokeWidth={4} />
+                <Circle
+                  cx={20}
+                  cy={20}
+                  r={14}
+                  fill="none"
+                  stroke={C.primary}
+                  strokeWidth={4}
+                  strokeDasharray={`${2 * Math.PI * 14} ${2 * Math.PI * 14}`}
+                  strokeDashoffset={(2 * Math.PI * 14) * (1 - Math.max(0, Math.min(headerProgressPct, 100)) / 100)}
+                  strokeLinecap="round"
+                  transform="rotate(-90 20 20)"
+                />
+              </Svg>
+            </View>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.iconBtn, { backgroundColor: C.surface, borderColor: C.border }, showFilters && { backgroundColor: C.primary, borderColor: C.primary }]}
             onPress={() => {
@@ -266,102 +268,15 @@ export default function MovementsScreen() {
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📭</Text>
               <Text style={[styles.emptyText, { color: C.textMuted }]}>{filters.scope === 'month' ? t('movements.empty_month') : t('common.no_data')}</Text>
-              {canUseExcelImport ? (
-                <TouchableOpacity style={[styles.emptyBtn, { borderColor: C.primary }]} onPress={() => void handlePremiumImportExport()}>
-                  <Crown size={14} color={C.primary} />
-                </TouchableOpacity>
-              ) : null}
             </View>
           }
           ListFooterComponent={
             <View style={styles.footerPanel}>
-              {/* Pagination counter */}
               {filtered.length > 0 ? (
                 <Text style={[styles.paginationHint, { color: C.textMuted }]}>
                   {Math.min(visibleCount, filtered.length)} / {filtered.length}
                 </Text>
               ) : null}
-              {/* Insights sidebar panel — matches web MovementsSidebar in fullWidth mobile mode */}
-              <View style={[styles.insightsCard, { backgroundColor: C.surface, borderColor: C.border }]}>
-                <View style={[styles.insightsHeader, { borderBottomColor: C.borderDim }]}>
-                  <View style={styles.insightsPeriodRow}>
-                    <View style={[styles.insightsDot, { backgroundColor: C.primary }]} />
-                    <Text style={[styles.insightsLabel, { color: C.primary }]}>{periodLabel}</Text>
-                  </View>
-                  <Text style={[styles.insightsTitle, { color: C.textMain }]}>{periodLabel}</Text>
-                </View>
-
-                {/* Balance summary — large balance + sub-row, matches web sidebar */}
-                <View style={[styles.balanceBlock, { borderBottomColor: C.borderDim }]}>
-                  <Text style={[styles.balanceBig, { color: totalBalance >= 0 ? C.textMain : C.expenseText }]}>
-                    {totalBalance >= 0 ? '' : '-'}{sym}{formatAmount(Math.abs(totalBalance), lang)}
-                  </Text>
-                  <View style={styles.balanceSubRow}>
-                    <View style={styles.balanceSubItem}>
-                      <Text style={[styles.balanceSubLabel, { color: C.incomeText }]}>{t('common.income_arrow').toUpperCase()}</Text>
-                      <Text style={[styles.balanceSubValue, { color: C.textMain }]}>+{sym}{formatAmount(totalIncome, lang)}</Text>
-                    </View>
-                    <View style={[styles.balanceSubDivider, { backgroundColor: C.borderDim }]} />
-                    <View style={styles.balanceSubItem}>
-                      <Text style={[styles.balanceSubLabel, { color: C.expenseText }]}>{t('common.expense_arrow').toUpperCase()}</Text>
-                      <Text style={[styles.balanceSubValue, { color: C.textMain }]}>-{sym}{formatAmount(totalExpense, lang)}</Text>
-                    </View>
-                  </View>
-                </View>
-
-                {/* Goal donut — matches web SVG donut (RADIUS=46, 110px, strokeWidth=14) */}
-                {filters.scope === 'month' && monthlyGoal > 0 ? (() => {
-                  const RADIUS = 46;
-                  const CX = 60;
-                  const CY = 60;
-                  const circumference = 2 * Math.PI * RADIUS;
-                  const fillColor = expenseGoalPct >= 100 ? C.expenseText : C.primary;
-                  const strokeDashoffset = circumference * (1 - expenseGoalPct / 100);
-                  return (
-                    <View style={[styles.goalPanel, { borderTopColor: C.borderDim }]}>
-                      <View style={styles.goalDonutRow}>
-                        <Svg width={110} height={110} viewBox="0 0 120 120">
-                          <Circle cx={CX} cy={CY} r={RADIUS} fill="none" stroke={C.borderDim} strokeWidth={14} />
-                          <Circle
-                            cx={CX} cy={CY} r={RADIUS} fill="none"
-                            stroke={fillColor} strokeWidth={14}
-                            strokeDasharray={`${circumference} ${circumference}`}
-                            strokeDashoffset={strokeDashoffset}
-                            strokeLinecap="round"
-                            transform={`rotate(-90 ${CX} ${CY})`}
-                          />
-                        </Svg>
-                        <View style={styles.goalDonutMeta}>
-                          <Text style={[styles.goalTitle, { color: C.textMain }]}>{t('movements.sidebar_goal').toUpperCase()}</Text>
-                          <Text style={[styles.goalPct, { color: fillColor }]}>{Math.round(expenseGoalPct)}%</Text>
-                          <Text style={[styles.goalMeta, { color: C.textMuted }]}>{sym}{formatAmount(totalExpense, lang)}</Text>
-                          <Text style={[styles.goalMetaLimit, { color: C.textMuted }]}>{t('common.limit')}: {sym}{formatAmount(monthlyGoal, lang)}</Text>
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })() : null}
-
-                {/* Top categories */}
-                <View style={styles.topCatsPanel}>
-                  {topCategories.length === 0 ? (
-                    <Text style={[styles.noCats, { color: C.textMuted }]}>{t('common.no_data')}</Text>
-                  ) : topCategories.map(([name, value]) => (
-                    <View key={name} style={[styles.catRow, { backgroundColor: C.surfaceAlt, borderColor: C.borderDim }]}>
-                      <View style={styles.catCopy}>
-                        <View style={styles.catCopyMain}>
-                          <Text style={[styles.catIndex, { color: C.primary }]}>{String(topCategories.findIndex(([entry]) => entry === name) + 1).padStart(2, '0')}</Text>
-                          <Text style={[styles.catName, { color: C.textMain }]} numberOfLines={1}>{formatCategoryLabel(name)}</Text>
-                        </View>
-                        <Text style={[styles.catAmount, { color: C.textMuted }]}>{sym}{formatAmount(value, lang)}</Text>
-                      </View>
-                      <View style={[styles.catBarTrack, { backgroundColor: C.borderDim }]}>
-                        <View style={[styles.catBarFill, { backgroundColor: C.primary, width: `${topCategoryMax > 0 ? (value / topCategoryMax) * 100 : 0}%` as `${number}%` }]} />
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
             </View>
           }
         />
@@ -465,6 +380,94 @@ export default function MovementsScreen() {
           </ModalSafeAreaView>
         </View>
       </Modal>
+
+      <Modal visible={showInsightsModal} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={() => setShowInsightsModal(false)}>
+        <View style={styles.periodModalOverlay}>
+          <TouchableOpacity style={styles.periodModalBackdrop} activeOpacity={1} onPress={() => setShowInsightsModal(false)} />
+          <ModalSafeAreaView style={styles.periodModalViewport}>
+            <View style={[styles.periodModalCard, { backgroundColor: C.surface, borderColor: C.border }]}> 
+              <View style={[styles.insightsHeader, { borderBottomColor: C.borderDim }]}> 
+                <View style={styles.insightsPeriodRow}>
+                  <View style={[styles.insightsDot, { backgroundColor: C.primary }]} />
+                  <Text style={[styles.insightsLabel, { color: C.primary }]}>{periodLabel}</Text>
+                </View>
+              </View>
+
+              <View style={[styles.balanceBlock, { borderBottomColor: C.borderDim }]}> 
+                <Text style={[styles.balanceBig, { color: totalBalance >= 0 ? C.textMain : C.expenseText }]}> 
+                  {totalBalance >= 0 ? '' : '-'}{sym}{formatAmount(Math.abs(totalBalance), lang)}
+                </Text>
+                <View style={styles.balanceSubRow}>
+                  <View style={styles.balanceSubItem}>
+                    <Text style={[styles.balanceSubLabel, { color: C.incomeText }]}>{t('common.income_arrow').toUpperCase()}</Text>
+                    <Text style={[styles.balanceSubValue, { color: C.textMain }]}>+{sym}{formatAmount(totalIncome, lang)}</Text>
+                  </View>
+                  <View style={[styles.balanceSubDivider, { backgroundColor: C.borderDim }]} />
+                  <View style={styles.balanceSubItem}>
+                    <Text style={[styles.balanceSubLabel, { color: C.expenseText }]}>{t('common.expense_arrow').toUpperCase()}</Text>
+                    <Text style={[styles.balanceSubValue, { color: C.textMain }]}>-{sym}{formatAmount(totalExpense, lang)}</Text>
+                  </View>
+                </View>
+              </View>
+
+              {filters.scope === 'month' && monthlyGoal > 0 ? (() => {
+                const RADIUS = 46;
+                const CX = 60;
+                const CY = 60;
+                const circumference = 2 * Math.PI * RADIUS;
+                const fillColor = expenseGoalPct >= 100 ? C.expenseText : C.primary;
+                const strokeDashoffset = circumference * (1 - expenseGoalPct / 100);
+                return (
+                  <View style={[styles.goalPanel, { borderTopColor: C.borderDim }]}> 
+                    <View style={styles.goalDonutRow}>
+                      <Svg width={110} height={110} viewBox="0 0 120 120">
+                        <Circle cx={CX} cy={CY} r={RADIUS} fill="none" stroke={C.borderDim} strokeWidth={14} />
+                        <Circle
+                          cx={CX} cy={CY} r={RADIUS} fill="none"
+                          stroke={fillColor} strokeWidth={14}
+                          strokeDasharray={`${circumference} ${circumference}`}
+                          strokeDashoffset={strokeDashoffset}
+                          strokeLinecap="round"
+                          transform={`rotate(-90 ${CX} ${CY})`}
+                        />
+                      </Svg>
+                      <View style={styles.goalDonutMeta}>
+                        <Text style={[styles.goalTitle, { color: C.textMain }]}>{t('movements.sidebar_goal').toUpperCase()}</Text>
+                        <Text style={[styles.goalPct, { color: fillColor }]}>{Math.round(expenseGoalPct)}%</Text>
+                        <Text style={[styles.goalMeta, { color: C.textMuted }]}>{sym}{formatAmount(expenseForGoal, lang)}</Text>
+                        <Text style={[styles.goalMetaLimit, { color: C.textMuted }]}>{t('common.limit')}: {sym}{formatAmount(monthlyGoal, lang)}</Text>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })() : null}
+
+              <View style={styles.topCatsPanel}>
+                {topCategories.length === 0 ? (
+                  <Text style={[styles.noCats, { color: C.textMuted }]}>{t('common.no_data')}</Text>
+                ) : topCategories.map(([name, value], index) => (
+                  <View key={name} style={[styles.catRow, { backgroundColor: C.surfaceAlt, borderColor: C.borderDim }]}> 
+                    <View style={styles.catCopy}>
+                      <View style={styles.catCopyMain}>
+                        <Text style={[styles.catIndex, { color: C.primary }]}>{String(index + 1).padStart(2, '0')}</Text>
+                        <Text style={[styles.catName, { color: C.textMain }]} numberOfLines={1}>{formatCategoryLabel(name)}</Text>
+                      </View>
+                      <Text style={[styles.catAmount, { color: C.textMuted }]}>{sym}{formatAmount(value, lang)}</Text>
+                    </View>
+                    <View style={[styles.catBarTrack, { backgroundColor: C.borderDim }]}> 
+                      <View style={[styles.catBarFill, { backgroundColor: C.primary, width: `${topCategoryMax > 0 ? (value / topCategoryMax) * 100 : 0}%` as `${number}%` }]} />
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              <TouchableOpacity style={[styles.periodDoneBtn, { backgroundColor: C.primary }]} onPress={() => setShowInsightsModal(false)}>
+                <Text style={[styles.periodDoneText, { color: C.primaryText }]}>{t('btn.close').toUpperCase()}</Text>
+              </TouchableOpacity>
+            </View>
+          </ModalSafeAreaView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -480,14 +483,15 @@ const styles = StyleSheet.create({
   title: { fontSize: FontSize.xl, fontWeight: FontWeight.black, letterSpacing: -0.5 },
   headerActions: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' },
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderRadius: 2 },
-  premiumBtn: {
+  insightsButton: {
     width: 36,
     height: 36,
+    borderWidth: 1,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderRadius: 2,
   },
+  insightsMiniChart: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
   // Search bar matches web: 2px radius, 1px border, with magnifying icon
   searchWrap: {
     flexDirection: 'row', alignItems: 'center', borderRadius: 2, borderWidth: 1,
@@ -577,8 +581,6 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: Spacing.xxxl, gap: Spacing.md },
   emptyIcon: { fontSize: 48 },
   emptyText: { fontSize: FontSize.base, fontWeight: FontWeight.semibold },
-  emptyBtn: { borderWidth: 1, borderRadius: 2, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm },
-  emptyBtnText: { fontSize: FontSize.xs, fontWeight: FontWeight.bold, letterSpacing: 0.8 },
   periodModalOverlay: { flex: 1, justifyContent: 'flex-end' },
   periodModalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
   periodModalViewport: { width: '100%' },

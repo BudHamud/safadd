@@ -1,0 +1,56 @@
+import { StyleSheet } from 'react-native';
+import { Spacing, Radius, FontSize, FontWeight } from '../../../constants/theme';
+
+export const s = StyleSheet.create({
+  stack: { gap: Spacing.md },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: Radius.block,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm + 2,
+  },
+  statusLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  statusText: { fontSize: FontSize.sm, fontWeight: FontWeight.black, letterSpacing: 0.3 },
+  statusTier: { fontSize: FontSize.xs, fontWeight: FontWeight.black, letterSpacing: 0.8 },
+  heroBlock: { gap: Spacing.xs, paddingVertical: Spacing.sm },
+  heroTitle: { fontSize: 24, fontWeight: FontWeight.black, letterSpacing: -0.6 },
+  heroSubtitle: { fontSize: FontSize.sm, lineHeight: 20 },
+  table: { borderWidth: 1, borderRadius: Radius.card, overflow: 'hidden' },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm + 2,
+  },
+  headerFeature: { flex: 1, fontSize: FontSize.xs, fontWeight: FontWeight.black, letterSpacing: 0.8 },
+  headerCol: { flex: 1, fontSize: FontSize.xs, fontWeight: FontWeight.black, letterSpacing: 0.8, textAlign: 'center' },
+  cellFeature: { flex: 1, fontSize: FontSize.sm },
+  cell: { flex: 1, fontSize: FontSize.sm, fontWeight: FontWeight.bold, textAlign: 'center' },
+  divider: { height: StyleSheet.hairlineWidth },
+  offerGrid: { gap: Spacing.sm },
+  offerCard: {
+    borderWidth: 1,
+    borderRadius: Radius.block,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  offerTop: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  offerTitles: { flex: 1, gap: 2 },
+  offerPrice: { alignItems: 'flex-end', gap: 2, paddingTop: 1 },
+  offerName: { fontSize: FontSize.sm, fontWeight: FontWeight.black, letterSpacing: 0.5 },
+  offerAmount: { fontSize: FontSize.xl, fontWeight: FontWeight.black, letterSpacing: -0.4 },
+  offerPeriod: { fontSize: 10, fontWeight: FontWeight.black, letterSpacing: 0.8 },
+  offerCaption: { fontSize: FontSize.xs, lineHeight: 18 },
+  offerBtn: {
+    borderRadius: Radius.block,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    marginTop: Spacing.xs,
+  },
+  offerBtnText: { fontSize: FontSize.sm, fontWeight: FontWeight.black, letterSpacing: 0.8 },
+  legal: { fontSize: 10, lineHeight: 16, textAlign: 'center', paddingHorizontal: Spacing.sm },
+});
+

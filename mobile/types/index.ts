@@ -38,11 +38,42 @@ export interface WebUser {
   username: string;
   authId?: string | null; // = auth.users.id
   role: string;
+  planTier?: 'free' | 'pro';
   monthlyGoal: number;
   currency?: string | null;
   goalCurrency?: string | null;
   availableCurrencies?: string[] | null;
+  deviceIds?: string[] | null;
   createdAt: string;
+}
+
+export type PlanTier = 'free' | 'pro';
+
+export interface UserPlanEntitlements {
+  advancedAnalytics: boolean;
+  categoryGoals: boolean;
+  customCategories: boolean;
+  maxCustomCategories: number | null;
+  dataExport: boolean;
+  importRowsPerDay: number;
+  maxDevices: number | null;
+  maxSecondaryCurrencies: number | null;
+  prioritySupport: boolean;
+  travelMode: 'none';
+}
+
+export interface UserPlanSyncStatus {
+  currentDeviceAllowed: boolean;
+  currentDeviceId: string | null;
+  deviceLimitReached: boolean;
+  maxDevices: number | null;
+  registeredDevices: number;
+}
+
+export interface UserPlan {
+  tier: PlanTier;
+  entitlements: UserPlanEntitlements;
+  sync: UserPlanSyncStatus;
 }
 
 // ── Category (derived from tag strings, not a DB table) ───────────────────

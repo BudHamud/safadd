@@ -352,7 +352,11 @@ export const useMovementsLogic = (
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    throw new Error(err?.error ?? `Error HTTP ${res.status} en chunk ${Math.floor(i / CHUNK_SIZE) + 1}/${totalChunks}`);
+                    throw new Error(
+                        err?.errorDetail
+                            ? `${err?.error ?? 'error'}: ${err.errorDetail}`
+                            : err?.error ?? `Error HTTP ${res.status} en chunk ${Math.floor(i / CHUNK_SIZE) + 1}/${totalChunks}`
+                    );
                 }
                 setImportProgress({ done: Math.min(i + CHUNK_SIZE, batch.length), total: batch.length });
             }

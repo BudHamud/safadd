@@ -7,7 +7,7 @@ const supabaseUrl = getRequiredServerEnv('NEXT_PUBLIC_SUPABASE_URL');
 const supabaseAnonKey = getRequiredServerEnv('SUPABASE_ANON_KEY');
 const authUserEndpoint = new URL('/auth/v1/user', supabaseUrl).toString();
 const authSignOutEndpoint = new URL('/auth/v1/logout?scope=global', supabaseUrl).toString();
-const appUserProfileSelect = 'id,username,role,monthlyGoal,createdAt,authId,currency,goalCurrency,availableCurrencies';
+const appUserProfileSelect = 'id,username,role,planTier,monthlyGoal,createdAt,authId,currency,goalCurrency,availableCurrencies,deviceIds';
 
 type CreateSupabaseAuthClientOptions = {
     flowType?: 'implicit' | 'pkce';
@@ -77,10 +77,12 @@ export async function ensureAppUserProfileWithSupabase(accessToken: string, user
                 username,
                 password: passwordPlaceholder,
                 authId: user.id,
+                planTier: 'free',
                 monthlyGoal: 0,
                 currency: 'USD',
                 goalCurrency: 'USD',
                 availableCurrencies: ['USD'],
+                deviceIds: [],
             })
             .select(appUserProfileSelect)
             .single();
@@ -114,12 +116,14 @@ export async function ensureAppUserProfile(user: { id: string; email?: string | 
             id: true,
             username: true,
             role: true,
+            planTier: true,
             monthlyGoal: true,
             createdAt: true,
             authId: true,
             currency: true,
             goalCurrency: true,
             availableCurrencies: true,
+            deviceIds: true,
         },
     });
 
@@ -141,21 +145,25 @@ export async function ensureAppUserProfile(user: { id: string; email?: string | 
                     username,
                     password: passwordPlaceholder,
                     authId: user.id,
+                    planTier: 'free',
                     monthlyGoal: 0,
                     currency: 'USD',
                     goalCurrency: 'USD',
                     availableCurrencies: ['USD'],
+                    deviceIds: [],
                 },
                 select: {
                     id: true,
                     username: true,
                     role: true,
+                    planTier: true,
                     monthlyGoal: true,
                     createdAt: true,
                     authId: true,
                     currency: true,
                     goalCurrency: true,
                     availableCurrencies: true,
+                    deviceIds: true,
                 },
             });
         } catch (error) {
@@ -165,12 +173,14 @@ export async function ensureAppUserProfile(user: { id: string; email?: string | 
                     id: true,
                     username: true,
                     role: true,
+                    planTier: true,
                     monthlyGoal: true,
                     createdAt: true,
                     authId: true,
                     currency: true,
                     goalCurrency: true,
                     availableCurrencies: true,
+                    deviceIds: true,
                 },
             });
 

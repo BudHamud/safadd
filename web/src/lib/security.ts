@@ -155,6 +155,49 @@ export const isValidImageMimeType = (value: unknown): value is (typeof IMAGE_MIM
 export const isValidDateInput = (value: unknown) =>
     typeof value === 'string' && DATE_INPUT_REGEX.test(value.trim());
 
+const normalizeTransactionDateInput = (value: unknown) => {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    if (DATE_INPUT_REGEX.test(trimmed)) {
+        return trimmed.replace(/\//g, '-');
+    }
+
+    const dayFirstMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$/);
+    if (!dayFirstMatch) {
+        return null;
+    }
+
+    const [, dayRaw, monthRaw, yearRaw] = dayFirstMatch;
+    const day = Number(dayRaw);
+    const month = Number(monthRaw);
+    const parsedYear = Number(yearRaw);
+    const year = yearRaw.length === 2 ? 2000 + parsedYear : parsedYear;
+
+    const candidate = new Date(year, month - 1, day);
+    const isSameDate = (
+        candidate.getFullYear() === year
+        && candidate.getMonth() === month - 1
+        && candidate.getDate() === day
+    );
+
+    if (!isSameDate) {
+        return null;
+    }
+
+    return [
+        String(year).padStart(4, '0'),
+        String(month).padStart(2, '0'),
+        String(day).padStart(2, '0'),
+    ].join('-');
+};
+
 export const normalizeTagInput = (value: unknown) =>
     typeof value === 'string'
         ? value.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -269,7 +312,7 @@ export function sanitizeTransactionInput(payload: any, options: SanitizeOptions 
 
     const date = payload?.date === undefined
         ? (partial ? undefined : new Date().toISOString().split('T')[0])
-        : String(payload.date).trim();
+        : normalizeTransactionDateInput(payload.date);
 
     const icon = payload?.icon === undefined
         ? (partial ? undefined : '💳')
@@ -296,6 +339,7 @@ export function sanitizeTransactionInput(payload: any, options: SanitizeOptions 
     if (desc !== undefined && desc.length === 0) return { error: 'invalid_desc' as const };
     if (tag !== undefined && tag.length === 0) return { error: 'invalid_tag' as const };
     if (type !== undefined && !TRANSACTION_TYPES.has(type)) return { error: 'invalid_type' as const };
+    if (date === null) return { error: 'invalid_date' as const };
     if (date !== undefined && !isValidDateInput(date)) return { error: 'invalid_date' as const };
     if (goalType !== undefined && !GOAL_TYPES.has(goalType)) return { error: 'invalid_goal_type' as const };
     if (paymentMethod !== undefined && paymentMethod !== null && !PAYMENT_METHODS.has(paymentMethod)) return { error: 'invalid_payment_method' as const };

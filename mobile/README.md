@@ -63,6 +63,8 @@ pnpm install --no-frozen-lockfile
 Variables necesarias:
 
 - `EXPO_PUBLIC_EAS_PROJECT_ID`: project id de Expo/EAS.
+- `EXPO_PUBLIC_PRO_YEARLY_URL`: checkout externo para Safadd+ anual.
+- `EXPO_PUBLIC_PRO_LIFETIME_URL`: checkout externo para Safadd+ lifetime.
 
 Builds y updates:
 

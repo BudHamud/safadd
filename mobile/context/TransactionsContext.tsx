@@ -132,7 +132,7 @@ function sortTransactionsByDate(transactions: Transaction[]) {
 }
 
 export function TransactionsProvider({ children }: { children: React.ReactNode }) {
-  const { session, webUser, currency } = useAuth();
+  const { session, webUser, currency, loading: authLoading } = useAuth();
   const [baseTransactions, setBaseTransactions] = useState<Transaction[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -161,6 +161,10 @@ export function TransactionsProvider({ children }: { children: React.ReactNode }
 
   const fetchTransactions = useCallback(async (options?: { useCache?: boolean; silent?: boolean }) => {
     if (!userId) {
+      if (authLoading) {
+        return;
+      }
+
       setBaseTransactions([]);
       setTransactions([]);
       setError(null);
@@ -211,7 +215,7 @@ export function TransactionsProvider({ children }: { children: React.ReactNode }
         setLoading(false);
       }
     }
-  }, [rebuildVisibleTransactions, userId]);
+  }, [authLoading, rebuildVisibleTransactions, userId]);
 
   useEffect(() => {
     getCachedExchangeRateSnapshot().then(setSnapshot).catch(() => setSnapshot(null));
@@ -222,8 +226,12 @@ export function TransactionsProvider({ children }: { children: React.ReactNode }
   }, [loadCategoryState]);
 
   useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
     void fetchTransactions({ useCache: true });
-  }, [fetchTransactions, tick]);
+  }, [authLoading, fetchTransactions, tick]);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('tx_saved', () => {

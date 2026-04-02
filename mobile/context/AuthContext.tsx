@@ -1,11 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { Session, User as AuthUser } from '@supabase/supabase-js';
 import { supabase, supabaseConfigError } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
 import { reportClientError } from '../lib/clientErrorReporter';
 import { getItemWithLegacyKey } from '../lib/storage';
-import { Profile, WebUser } from '../types';
+import { PlanTier, Profile, UserPlan, UserPlanSyncStatus, WebUser } from '../types';
 import type { SupportedCurrency } from '@safed/shared/types';
 import { SUPPORTED_CURRENCIES } from '@safed/shared/currency';
 
@@ -17,6 +17,7 @@ const GOAL_CURRENCY_STORAGE_KEY = 'safadd_goal_currency';
 const LEGACY_GOAL_CURRENCY_STORAGE_KEY = 'safed_goal_currency';
 const AVAILABLE_CURRENCIES_STORAGE_KEY = 'safadd_available_currencies';
 const LEGACY_AVAILABLE_CURRENCIES_STORAGE_KEY = 'safed_available_currencies';
+const INSTALLATION_ID_STORAGE_KEY = 'safadd_installation_id';
 const DEFAULT_CURRENCY: SupportedCurrency = 'USD';
 
 const SUPPORTED_CURRENCIES_SET = new Set<string>(SUPPORTED_CURRENCIES as string[]);
@@ -82,16 +83,20 @@ const NON_REPORTABLE_AUTH_ERROR_FRAGMENTS = [
   'weak_password',
 ];
 
-type StructuredAuthError = Error & {
+type StructuredAppError = Error & {
   code?: string;
   retryAfter?: number;
   requiresCaptcha?: boolean;
   canRetryAt?: string;
+  limit?: number;
+  remaining?: number;
+  requested?: number;
+  used?: number;
 };
 
-function createStructuredAuthError(payload: any, fallbackCode: string): StructuredAuthError {
+function createStructuredAppError(payload: any, fallbackCode: string): StructuredAppError {
   const code = String(payload?.errorCode || payload?.error || fallbackCode);
-  const error = new Error(code) as StructuredAuthError;
+  const error = new Error(code) as StructuredAppError;
 
   error.code = code;
 
@@ -107,7 +112,65 @@ function createStructuredAuthError(payload: any, fallbackCode: string): Structur
     error.canRetryAt = payload.canRetryAt;
   }
 
+  if (typeof payload?.limit === 'number') {
+    error.limit = payload.limit;
+  }
+
+  if (typeof payload?.remaining === 'number') {
+    error.remaining = payload.remaining;
+  }
+
+  if (typeof payload?.requested === 'number') {
+    error.requested = payload.requested;
+  }
+
+  if (typeof payload?.used === 'number') {
+    error.used = payload.used;
+  }
+
   return error;
+}
+
+function normalizePlanTier(value: unknown): PlanTier {
+  return value === 'pro' ? 'pro' : 'free';
+}
+
+function createFallbackPlan(tier: PlanTier = 'free'): UserPlan {
+  const isPro = tier === 'pro';
+
+  return {
+    tier,
+    entitlements: {
+      advancedAnalytics: isPro,
+      categoryGoals: isPro,
+      customCategories: true,
+      maxCustomCategories: isPro ? null : 10,
+      dataExport: isPro,
+      importRowsPerDay: isPro ? 500 : 50,
+      maxDevices: null,
+      maxSecondaryCurrencies: isPro ? null : 2,
+      prioritySupport: true,
+      travelMode: 'none',
+    },
+    sync: {
+      currentDeviceAllowed: true,
+      currentDeviceId: null,
+      deviceLimitReached: false,
+      maxDevices: null,
+      registeredDevices: 0,
+    },
+  };
+}
+
+async function getOrCreateInstallationId() {
+  const existing = await AsyncStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
+  if (existing && existing.trim()) {
+    return existing.trim();
+  }
+
+  const nextId = `mob_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  await AsyncStorage.setItem(INSTALLATION_ID_STORAGE_KEY, nextId);
+  return nextId;
 }
 
 function shouldReportAuthError(error: unknown) {
@@ -131,6 +194,9 @@ type AuthContextType = {
   session: Session | null;
   user: AuthUser | null;      // Supabase auth user (auth.users)
   webUser: WebUser | null;    // Row from User table (internal profile)
+  plan: UserPlan | null;
+  planTier: PlanTier;
+  syncStatus: UserPlanSyncStatus | null;
   profile: Profile | null;    // Derived profile for UI
   loading: boolean;
   configError: string | null;
@@ -152,10 +218,14 @@ type AuthContextType = {
   removeCurrency: (currency: SupportedCurrency) => Promise<void>;
   goalCurrency: SupportedCurrency;
   setGoalCurrency: (currency: SupportedCurrency) => Promise<void>;
+  setMonthlyGoal: (goal: number) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
   session: null, user: null, webUser: null, profile: null, loading: true,
+  plan: null,
+  planTier: 'free',
+  syncStatus: null,
   configError: null,
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
@@ -168,16 +238,22 @@ const AuthContext = createContext<AuthContextType>({
   removeCurrency: async () => {},
   goalCurrency: 'USD',
   setGoalCurrency: async () => {},
+  setMonthlyGoal: async () => {},
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [webUser, setWebUser] = useState<WebUser | null>(null);
+  const [plan, setPlan] = useState<UserPlan | null>(null);
   const [currency, setCurrencyState] = useState<SupportedCurrency>('USD');
   const [goalCurrency, setGoalCurrencyState] = useState<SupportedCurrency>('USD');
   const [availableCurrencies, setAvailableCurrenciesState] = useState<SupportedCurrency[]>(['USD']);
   const [loading, setLoading] = useState(true);
+  const profileLoadPromiseRef = useRef<Promise<WebUser | null> | null>(null);
+  const lastProfileTimeoutAtRef = useRef(0);
+  const sessionRef = useRef<Session | null>(null);
+  const webUserRef = useRef<WebUser | null>(null);
 
   const persistCurrencyPreferencesLocally = useCallback(async (prefs: {
     currency: SupportedCurrency;
@@ -201,36 +277,90 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setAvailableCurrenciesState(prefs.availableCurrencies);
   }, []);
 
-  const syncCurrencyPreferencesRemotely = useCallback(async (prefs: {
-    currency: SupportedCurrency;
-    goalCurrency: SupportedCurrency;
-    availableCurrencies: SupportedCurrency[];
-  }) => {
-    if (supabaseConfigError || !user?.id) return;
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
-    const { error } = await supabase
-      .from('User')
-      .update({
-        currency: prefs.currency,
-        goalCurrency: prefs.goalCurrency,
-        availableCurrencies: prefs.availableCurrencies,
-      })
-      .eq('authId', user.id);
+  useEffect(() => {
+    webUserRef.current = webUser;
+  }, [webUser]);
 
-    if (error) {
-      console.warn('[AuthContext] syncCurrencyPreferencesRemotely error:', error.message);
-      return;
+  const applyRemoteProfile = useCallback(async (payload: (WebUser & { email?: string | null; plan?: UserPlan | null }) | null) => {
+    if (!payload) {
+      setWebUser(null);
+      setPlan(null);
+      webUserRef.current = null;
+      return null;
     }
 
-    setWebUser((current) => current
-      ? {
-          ...current,
-          currency: prefs.currency,
-          goalCurrency: prefs.goalCurrency,
-          availableCurrencies: prefs.availableCurrencies,
-        }
-      : current);
-  }, [user?.id]);
+    const typedData: WebUser = {
+      ...payload,
+      planTier: normalizePlanTier(payload.planTier),
+      deviceIds: Array.isArray(payload.deviceIds) ? payload.deviceIds : [],
+    };
+    const nextPrefs = resolveCurrencyPreferences({
+      currency: typedData.currency,
+      goalCurrency: typedData.goalCurrency,
+      availableCurrencies: typedData.availableCurrencies,
+    });
+
+    applyCurrencyPreferences(nextPrefs);
+    await persistCurrencyPreferencesLocally(nextPrefs);
+    setWebUser(typedData);
+    setPlan(payload.plan ?? createFallbackPlan(normalizePlanTier(payload.planTier)));
+    webUserRef.current = typedData;
+    return typedData;
+  }, [applyCurrencyPreferences, persistCurrencyPreferencesLocally]);
+
+  const loadWebUserFallback = useCallback(async (authUid: string) => {
+    const { data, error } = await supabase
+      .from('User')
+      .select('id, username, authId, role, planTier, monthlyGoal, currency, goalCurrency, availableCurrencies, deviceIds, createdAt')
+      .eq('authId', authUid)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[AuthContext] loadWebUser fallback error:', error.message);
+      return null;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    return await applyRemoteProfile({
+      ...(data as WebUser),
+      plan: createFallbackPlan(normalizePlanTier((data as WebUser).planTier)),
+    });
+  }, [applyRemoteProfile]);
+
+  const updateProfileRemotely = useCallback(async (patch: Record<string, unknown>) => {
+    if (supabaseConfigError) {
+      throw new Error(supabaseConfigError);
+    }
+
+    const activeSession = session ?? (await supabase.auth.getSession()).data.session;
+    if (!activeSession?.access_token) {
+      throw new Error('missing_session');
+    }
+
+    const installationId = await getOrCreateInstallationId();
+    const response = await apiFetch('/api/user', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-safadd-device-id': installationId,
+      },
+      body: JSON.stringify({ ...patch, deviceId: installationId }),
+    }, activeSession);
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw createStructuredAppError(payload, 'profile_update_failed');
+    }
+
+    await applyRemoteProfile(payload as WebUser & { email?: string | null; plan?: UserPlan | null });
+  }, [applyRemoteProfile, session]);
 
   useEffect(() => {
     Promise.all([
@@ -256,38 +386,65 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, [applyCurrencyPreferences]);
 
   // Load User row from gastos-app schema by authId = auth.users.id
-  const loadWebUser = useCallback(async (authUid: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('User')
-        .select('id, username, authId, role, monthlyGoal, currency, goalCurrency, availableCurrencies, createdAt')
-        .eq('authId', authUid)
-        .maybeSingle();
-
-      if (error) {
-        console.warn('[AuthContext] loadWebUser error:', error.message);
-        return null;
-      }
-      if (data) {
-        const typedData = data as WebUser;
-        const nextPrefs = resolveCurrencyPreferences({
-          currency: typedData.currency,
-          goalCurrency: typedData.goalCurrency,
-          availableCurrencies: typedData.availableCurrencies,
-        });
-
-        applyCurrencyPreferences(nextPrefs);
-        await persistCurrencyPreferencesLocally(nextPrefs);
-        setWebUser(typedData);
-        return typedData;
-      }
-      console.warn('[AuthContext] No User row found for authId', authUid);
-      return null;
-    } catch (e) {
-      console.warn('[AuthContext] loadWebUser exception:', e);
-      return null;
+  const loadWebUser = useCallback((authUid: string, options?: { force?: boolean; silent?: boolean }) => {
+    if (profileLoadPromiseRef.current && !options?.force) {
+      return profileLoadPromiseRef.current;
     }
-  }, [applyCurrencyPreferences, persistCurrencyPreferencesLocally]);
+
+    if (!options?.force && Date.now() - lastProfileTimeoutAtRef.current < 15000) {
+      return Promise.resolve(webUserRef.current);
+    }
+
+    const request = (async () => {
+      try {
+        if (supabaseConfigError) {
+          return null;
+        }
+
+        const activeSession = sessionRef.current ?? (await supabase.auth.getSession()).data.session;
+        if (!activeSession?.access_token) {
+          return null;
+        }
+
+        const installationId = await getOrCreateInstallationId();
+        const response = await apiFetch('/api/user', {
+          headers: {
+            'x-safadd-device-id': installationId,
+          },
+          timeoutMs: 4000,
+          timeoutMessage: 'profile_request_timeout',
+        }, activeSession);
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          if (!options?.silent) {
+            console.warn('[AuthContext] loadWebUser error:', payload?.error || response.status);
+          }
+          return await loadWebUserFallback(authUid);
+        }
+
+        return await applyRemoteProfile(payload as WebUser & { email?: string | null; plan?: UserPlan | null });
+      } catch (error) {
+        if (error instanceof Error && (error.name === 'TimeoutError' || error.message === 'profile_request_timeout' || error.message === 'request_timeout')) {
+          lastProfileTimeoutAtRef.current = Date.now();
+          if (!options?.silent) {
+            console.warn('[AuthContext] loadWebUser timeout, using fallback');
+          }
+          return await loadWebUserFallback(authUid);
+        }
+
+        if (!options?.silent) {
+          console.warn('[AuthContext] loadWebUser exception:', authUid, error);
+        }
+        return await loadWebUserFallback(authUid);
+      } finally {
+        profileLoadPromiseRef.current = null;
+      }
+    })();
+
+    profileLoadPromiseRef.current = request;
+    return request;
+  }, [applyRemoteProfile, loadWebUserFallback]);
 
   useEffect(() => {
     if (supabaseConfigError) {
@@ -305,12 +462,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         setSession(session);
+        sessionRef.current = session;
         setUser(session?.user ?? null);
 
         if (session?.user) {
-          await loadWebUser(session.user.id);
+          await loadWebUser(session.user.id, { silent: true });
         } else {
           setWebUser(null);
+          setPlan(null);
         }
       } catch (error) {
         if (isMounted) {
@@ -318,6 +477,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           setSession(null);
           setUser(null);
           setWebUser(null);
+          setPlan(null);
         }
       } finally {
         if (isMounted) {
@@ -328,21 +488,32 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     void bootstrapAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) {
         return;
       }
 
+      if (event === 'INITIAL_SESSION') {
+        return;
+      }
+
       setSession(session);
+      sessionRef.current = session;
       setUser(session?.user ?? null);
       if (session?.user) {
-        void loadWebUser(session.user.id).finally(() => {
-          if (isMounted) {
+        const shouldBlockUI = event === 'SIGNED_IN' || !webUserRef.current;
+        if (shouldBlockUI) {
+          setLoading(true);
+        }
+
+        void loadWebUser(session.user.id, { force: event === 'SIGNED_IN' }).finally(() => {
+          if (isMounted && shouldBlockUI) {
             setLoading(false);
           }
         });
       } else {
         setWebUser(null);
+        setPlan(null);
         setLoading(false);
       }
     });
@@ -395,7 +566,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const authError = createStructuredAuthError(payload, 'invalid_credentials');
+        const authError = createStructuredAppError(payload, 'invalid_credentials');
         await reportAuthError(authError, undefined, 'auth_signin_username');
         return { error: authError };
       }
@@ -450,7 +621,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const registrationError = createStructuredAuthError(payload, 'register_failed');
+        const registrationError = createStructuredAppError(payload, 'register_failed');
         await reportAuthError(registrationError, email.trim().toLowerCase(), 'auth_register');
         return { error: registrationError };
       }
@@ -490,19 +661,44 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const handleSignOut = async () => {
     if (supabaseConfigError) {
       setSession(null);
+      sessionRef.current = null;
       setUser(null);
       setWebUser(null);
+      setPlan(null);
+      webUserRef.current = null;
       return;
     }
 
     await supabase.auth.signOut();
     setWebUser(null);
+    setPlan(null);
+    sessionRef.current = null;
+    webUserRef.current = null;
   };
 
   const refreshProfile = useCallback(async () => {
     if (supabaseConfigError) return;
     if (user?.id) await loadWebUser(user.id);
   }, [user, loadWebUser]);
+
+  const commitCurrencyPreferences = useCallback(async (nextPrefs: {
+    currency: SupportedCurrency;
+    goalCurrency: SupportedCurrency;
+    availableCurrencies: SupportedCurrency[];
+  }) => {
+    const previousPrefs = { currency, goalCurrency, availableCurrencies };
+
+    applyCurrencyPreferences(nextPrefs);
+    await persistCurrencyPreferencesLocally(nextPrefs);
+
+    try {
+      await updateProfileRemotely(nextPrefs);
+    } catch (error) {
+      applyCurrencyPreferences(previousPrefs);
+      await persistCurrencyPreferencesLocally(previousPrefs);
+      throw error;
+    }
+  }, [availableCurrencies, currency, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, updateProfileRemotely]);
 
   const setCurrency = useCallback(async (nextCurrency: SupportedCurrency) => {
     const nextAvailableCurrencies = availableCurrencies.includes(nextCurrency)
@@ -513,11 +709,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       goalCurrency: nextAvailableCurrencies.includes(goalCurrency) ? goalCurrency : nextCurrency,
       availableCurrencies: nextAvailableCurrencies,
     };
-
-    applyCurrencyPreferences(nextPrefs);
-    await persistCurrencyPreferencesLocally(nextPrefs);
-    await syncCurrencyPreferencesRemotely(nextPrefs);
-  }, [availableCurrencies, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
+    await commitCurrencyPreferences(nextPrefs);
+  }, [availableCurrencies, goalCurrency, commitCurrencyPreferences]);
 
   const addCurrency = useCallback(async (nextCurrency: SupportedCurrency) => {
     if (availableCurrencies.includes(nextCurrency)) return;
@@ -526,10 +719,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       goalCurrency,
       availableCurrencies: [...availableCurrencies, nextCurrency],
     };
-    applyCurrencyPreferences(nextPrefs);
-    await persistCurrencyPreferencesLocally(nextPrefs);
-    await syncCurrencyPreferencesRemotely(nextPrefs);
-  }, [availableCurrencies, currency, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
+    await commitCurrencyPreferences(nextPrefs);
+  }, [availableCurrencies, currency, goalCurrency, commitCurrencyPreferences]);
 
   const removeCurrency = useCallback(async (code: SupportedCurrency) => {
     if (code === currency || availableCurrencies.length <= 1) return;
@@ -539,10 +730,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       goalCurrency: code === goalCurrency ? currency : goalCurrency,
       availableCurrencies: nextAvailableCurrencies,
     };
-    applyCurrencyPreferences(nextPrefs);
-    await persistCurrencyPreferencesLocally(nextPrefs);
-    await syncCurrencyPreferencesRemotely(nextPrefs);
-  }, [availableCurrencies, currency, goalCurrency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
+    await commitCurrencyPreferences(nextPrefs);
+  }, [availableCurrencies, currency, goalCurrency, commitCurrencyPreferences]);
 
   const setGoalCurrency = useCallback(async (nextCurrency: SupportedCurrency) => {
     const nextPrefs = {
@@ -550,14 +739,26 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       goalCurrency: availableCurrencies.includes(nextCurrency) ? nextCurrency : currency,
       availableCurrencies,
     };
-    applyCurrencyPreferences(nextPrefs);
-    await persistCurrencyPreferencesLocally(nextPrefs);
-    await syncCurrencyPreferencesRemotely(nextPrefs);
-  }, [availableCurrencies, currency, applyCurrencyPreferences, persistCurrencyPreferencesLocally, syncCurrencyPreferencesRemotely]);
+    await commitCurrencyPreferences(nextPrefs);
+  }, [availableCurrencies, currency, commitCurrencyPreferences]);
+
+  const setMonthlyGoal = useCallback(async (nextGoal: number) => {
+    if (!Number.isFinite(nextGoal) || nextGoal < 0) {
+      throw new Error('invalid_monthly_goal');
+    }
+
+    await updateProfileRemotely({ monthlyGoal: nextGoal });
+  }, [updateProfileRemotely]);
+
+  const planTier = plan?.tier ?? normalizePlanTier(webUser?.planTier);
+  const syncStatus = plan?.sync ?? null;
 
   return (
     <AuthContext.Provider value={{
       session, user, webUser, profile, loading,
+      plan,
+      planTier,
+      syncStatus,
       configError: supabaseConfigError,
       signIn: handleSignIn,
       signUp: handleSignUp,
@@ -570,6 +771,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       removeCurrency,
       goalCurrency,
       setGoalCurrency,
+      setMonthlyGoal,
     }}>
       {children}
     </AuthContext.Provider>

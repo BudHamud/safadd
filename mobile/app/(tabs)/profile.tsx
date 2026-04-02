@@ -1,4 +1,5 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Modal,
@@ -32,15 +33,16 @@ import Toast, { BaseToast, ErrorToast } from 'react-native-toast-message';
 type Section = 'identity' | 'goal' | 'theme' | 'categories' | 'notifications' | 'sync' | 'debug' | 'adminReports' | null;
 
 export default function ProfileScreen() {
-  const { user, profile, webUser, signOut, currency, availableCurrencies, setCurrency, addCurrency, removeCurrency } = useAuth();
+  const { user, profile, webUser, plan, planTier, syncStatus, signOut, currency, availableCurrencies, setCurrency, removeCurrency } = useAuth();
   const { lang, setLang, t } = useLanguage();
   const { theme: C } = useTheme();
-  const { openCount, unseenCount } = useAdminReports();
+  const { openCount, unseenCount, refresh: refreshAdminReports } = useAdminReports();
   const dialog = useDialog();
   const [activeSection, setActiveSection] = useState<Section>(null);
   const [isCurrencyModalOpen, setIsCurrencyModalOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const { categories, stats, syncPendingTransactions } = useDashboardData(webUser?.id ?? null, currency);
+  const isAdmin = (webUser?.role ?? '').toLowerCase() === 'admin';
 
   const [syncMode, setSyncModeState] = useState<SyncMode>('auto');
   const [pendingCount, setPendingCount] = useState(0);
@@ -57,6 +59,15 @@ export default function ProfileScreen() {
     return () => { mounted = false; };
   }, [activeSection]);
 
+  useFocusEffect(useCallback(() => {
+    if (!isAdmin) {
+      return undefined;
+    }
+
+    void refreshAdminReports();
+    return undefined;
+  }, [isAdmin, refreshAdminReports]));
+
   const displayName = (webUser?.username ?? profile?.full_name ?? user?.email ?? t('profile.title')).toUpperCase();
   const initials = displayName.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2);
 
@@ -67,38 +78,15 @@ export default function ProfileScreen() {
   const languageLabel = lang === 'es' ? t('profile.language_name_es') : t('profile.language_name_en');
   const appVersion = Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? '1.0.0';
   const versionLabel = `Safadd v${appVersion}`;
-  const isAdmin = (webUser?.role ?? '').toLowerCase() === 'admin';
+  const isPro = planTier === 'pro';
 
   const now = new Date();
   const daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
-
-  // ── Currency labels from i18n ──────────────────────────────────────────────
-  const currencyOptions = useMemo(() => ([
-    { value: 'USD' as const, label: t('profile.currency_usd') },
-    { value: 'EUR' as const, label: t('profile.currency_eur') },
-    { value: 'ARS' as const, label: t('profile.currency_ars') },
-    { value: 'ILS' as const, label: t('profile.currency_ils') },
-  ]), [t]);
-
-  const currentCurrencyLabel = currencyOptions.find(o => o.value === currency)?.label ?? currency;
-  const enabledCurrencyOptions = currencyOptions.filter((option) => availableCurrencies.includes(option.value));
-  const availableToAddOptions = currencyOptions.filter((option) => !availableCurrencies.includes(option.value));
 
   // ── Currency picker ────────────────────────────────────────────────────────
   const openCurrencyPicker = () => {
     haptic.selection();
     setIsCurrencyModalOpen(true);
-  };
-
-  const handleCurrencySelect = (nextCurrency: typeof currency) => {
-    haptic.selection();
-    setIsCurrencyModalOpen(false);
-    void setCurrency(nextCurrency);
-  };
-
-  const handleAddCurrency = (nextCurrency: typeof currency) => {
-    haptic.selection();
-    void addCurrency(nextCurrency);
   };
 
   const handleSignOut = async () => {
@@ -133,7 +121,7 @@ export default function ProfileScreen() {
           <View style={s.cardLabelRow}>
             <Text style={[s.cardLabel, { color: C.textMuted }]}>{t('profile.card_identity').toUpperCase()}</Text>
             <View style={[s.badge, { borderColor: C.primary, backgroundColor: `${C.primary}22` }]}>
-              <Text style={[s.badgeTxt, { color: C.primary }]}>{t('profile.card_identity_badge').toUpperCase()}</Text>
+              <Text style={[s.badgeTxt, { color: C.primary }]}>{(isPro ? t('plan.pro_badge') : t('plan.free_badge')).toUpperCase()}</Text>
             </View>
           </View>
           <View style={s.identityRow}>
@@ -146,7 +134,11 @@ export default function ProfileScreen() {
             <View style={[s.deviceIcon, { backgroundColor: C.surfaceAlt, borderColor: C.border }]}>
               <Text style={{ fontSize: 10 }}>📱</Text>
             </View>
-            <Text style={[s.devicesLabel, { color: C.textMuted }]}>{t('profile.card_manage_devices').toUpperCase()}</Text>
+            <Text style={[s.devicesLabel, { color: C.textMuted }]}> 
+              {syncStatus
+                ? t('plan.devices_usage', { count: syncStatus.registeredDevices, max: syncStatus.maxDevices ?? '∞' }).toUpperCase()
+                : t('profile.card_manage_devices').toUpperCase()}
+            </Text>
           </View>
         </TouchableOpacity>
 
@@ -276,10 +268,12 @@ export default function ProfileScreen() {
           label={t('profile.sync_title')}
           value={pendingCount > 0
             ? `${pendingCount} ${t('profile.sync_pending')}`
+            : syncStatus?.deviceLimitReached
+              ? t('plan.device_limit_title')
             : syncMode === 'manual'
               ? `⏸ ${t('profile.sync_mode_manual')}`
               : `✓ ${t('profile.sync_none')}`}
-          valueColor={pendingCount > 0 ? C.accent : C.primary}
+          valueColor={syncStatus?.deviceLimitReached ? C.expenseText : pendingCount > 0 ? C.accent : C.primary}
           onPress={() => { haptic.selection(); setActiveSection('sync'); }}
           C={C}
         />
@@ -346,8 +340,8 @@ export default function ProfileScreen() {
         currency={currency}
         availableCurrencies={availableCurrencies}
         setCurrency={(c) => { haptic.selection(); return setCurrency(c); }}
-        addCurrency={addCurrency}
         removeCurrency={removeCurrency}
+        plan={plan}
       />
 
       {/* ── Modals ── */}

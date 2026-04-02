@@ -1,0 +1,76 @@
+import { StyleSheet } from 'react-native';
+import { Spacing, FontSize, FontWeight } from '../../../constants/theme';
+
+export const styles = StyleSheet.create({
+  wrapper: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+  },
+  title: { fontSize: FontSize.md, fontWeight: FontWeight.black },
+  closeBtn: {
+    width: 34,
+    height: 34,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchWrap: { padding: Spacing.base },
+  searchInput: {
+    fontSize: FontSize.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: 0,
+    borderWidth: 2,
+  },
+  createOption: {
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    borderWidth: 2,
+  },
+  createWrap: { paddingHorizontal: Spacing.base, marginBottom: Spacing.sm, gap: Spacing.sm },
+  createText: { fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  emojiTitle: { fontSize: FontSize.xs, fontWeight: FontWeight.black, letterSpacing: 1 },
+  customEmojiInput: {
+    fontSize: FontSize.base,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: 0,
+    borderWidth: 2,
+  },
+  emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
+  emojiBtn: {
+    width: 42,
+    height: 42,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emojiText: { fontSize: 20 },
+  noneOption: {
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+  },
+  noneText: { fontSize: FontSize.sm, fontWeight: FontWeight.medium, fontStyle: 'italic' },
+  listContent: { padding: Spacing.sm },
+  grid: { justifyContent: 'flex-start', gap: Spacing.sm },
+  catItem: {
+    flex: 1,
+    maxWidth: '31%',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderRadius: 0,
+    borderWidth: 2,
+    margin: Spacing.xs / 2,
+    gap: Spacing.xs,
+  },
+  catIcon: { fontSize: 24 },
+  catName: { fontSize: FontSize.xs, fontWeight: FontWeight.bold, textAlign: 'center' },
+  empty: { textAlign: 'center', padding: Spacing.xl },
+});
+

@@ -1,9 +1,9 @@
 {
   "name": "safadd-mobile",
   "main": "index.js",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "scripts": {
-    "start": "expo start",
+    "start": "expo start -c",
     "reset-project": "node ./scripts/reset-project.js",
     "icons": "node ./scripts/generate-app-icons.mjs",
     "android": "expo run:android",
@@ -62,6 +62,7 @@
     "react-native": "0.81.5",
     "react-native-android-notification-listener": "^5.0.1",
     "react-native-gesture-handler": "~2.28.0",
+    "react-native-purchases": "^9.15.1",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",

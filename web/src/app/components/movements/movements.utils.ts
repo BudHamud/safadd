@@ -69,6 +69,16 @@ export const formatDate = (raw: string): string => {
     ].join('/');
 };
 
+const formatDateForApi = (raw: string | number | Date | unknown): string => {
+    const d = parseDate(raw);
+    if (d.getTime() === 0) return '';
+    return [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, '0'),
+        String(d.getDate()).padStart(2, '0'),
+    ].join('-');
+};
+
 // ─── Icon lookup ──────────────────────────────────────────────────────────────
 
 export const getTxIcon = (tx: Transaction): string => {
@@ -300,7 +310,7 @@ export const parseExcelRow = (row: Record<string, unknown>, fallbackYear: string
 
     let date = rawDate.trim();
     if (date.match(/^\d{1,2}[/\-]\d{1,2}$/)) date = `${date}/${fallbackYear}`;
-    const resolvedDate = date || lastDate;
+    const resolvedDate = formatDateForApi(date) || lastDate;
 
     // Evaluate Credit / Debit
     let amount = 0;
@@ -364,13 +374,9 @@ export const parseExcelRowMapped = (
     const parsedDateObj = parseDate(rawDateVal);
     let date = parsedDateObj.getTime() === 0
         ? get(mapping.dateCol)   // fallback: use string as-is if parseDate failed
-        : [
-            String(parsedDateObj.getDate()).padStart(2, '0'),
-            String(parsedDateObj.getMonth() + 1).padStart(2, '0'),
-            parsedDateObj.getFullYear(),
-        ].join('/');
+        : formatDateForApi(parsedDateObj);
     if (date.match(/^\d{1,2}[/\-]\d{1,2}$/)) date = `${date}/${fallbackYear}`;
-    const resolvedDate = date || lastDate;
+    const resolvedDate = formatDateForApi(date) || lastDate;
 
     let amount = 0;
     let type: 'income' | 'expense' = 'expense';

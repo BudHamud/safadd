@@ -14,12 +14,15 @@ model User {
   password     String
   authId       String?       @unique // Supabase Auth UUID (auth.users.id)
   role         String        @default("user") // "admin" | "user"
+  planTier     String        @default("free")
   monthlyGoal  Float         @default(3000)
   currency     String        @default("USD")
   goalCurrency String        @default("USD")
   availableCurrencies String[] @default(["USD"])
+  deviceIds    String[]      @default([])
   pushToken    String?       // Expo push token for notifications
   transactions Transaction[]
+  importUsage  ImportUsage[]
   scanUsage    ScanUsage[]
   pendingNotifs PendingNotification[]
   createdAt    DateTime      @default(now())
@@ -53,6 +56,7 @@ model ScanUsage {
   id        String   @id @default(uuid())
   user      User     @relation(fields: [userId], references: [id])
   userId    String
+  authId      String?
   date      String   // YYYY-MM-DD — one record per user per day
   count     Int      @default(0)
   createdAt DateTime @default(now())
@@ -60,10 +64,22 @@ model ScanUsage {
   @@unique([userId, date]) // One row per user per day
 }
 
+model ImportUsage {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  date      String
+  rowCount  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date])
+}
+
 model PendingNotification {
   id          String   @id @default(uuid())
   user        User     @relation(fields: [userId], references: [id])
   userId      String
+  authId      String?
   bankName    String
   merchant    String
   amount      Float

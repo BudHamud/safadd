@@ -1,5 +1,5 @@
 {
-  "name": "safadd",
+  "name": "safadd-root",
   "private": true,
   "workspaces": [
     "web",

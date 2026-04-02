@@ -99,18 +99,19 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { theme: C } = useTheme();
-  const { webUser, currency } = useAuth();
   const { t } = useLanguage();
   const [showAdd, setShowAdd] = useState(false);
-  const { categories, createTransaction } = useDashboardData(webUser?.id ?? null, currency);
 
   return (
     <View style={[styles.container, { backgroundColor: C.bg }]}>
     <Tabs
+      detachInactiveScreens
       tabBar={(props) => <AppTabBar {...props} insets={insets} viewportWidth={width} onAddPress={() => setShowAdd(true)} />}
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
+        lazy: true,
+        freezeOnBlur: true,
       }}
     >
       <Tabs.Screen
@@ -155,24 +156,31 @@ export default function TabLayout() {
       />
     </Tabs>
 
-    {showAdd && (
-      <TransactionEditView
-        tx={null}
-        categories={categories}
-        userId={webUser?.id ?? ''}
-        onSave={async (txInput) => {
-          if (!webUser?.id) return false;
-          const success = await createTransaction({ ...txInput, userId: webUser.id });
-          if (success) {
-            DeviceEventEmitter.emit('tx_saved');
-            setShowAdd(false);
-          }
-          return success;
-        }}
-        onClose={() => setShowAdd(false)}
-      />
-    )}
+    {showAdd ? <AddTransactionSheet onClose={() => setShowAdd(false)} /> : null}
     </View>
+  );
+}
+
+function AddTransactionSheet({ onClose }: { onClose: () => void }) {
+  const { webUser, currency } = useAuth();
+  const { categories, createTransaction } = useDashboardData(webUser?.id ?? null, currency);
+
+  return (
+    <TransactionEditView
+      tx={null}
+      categories={categories}
+      userId={webUser?.id ?? ''}
+      onSave={async (txInput) => {
+        if (!webUser?.id) return false;
+        const success = await createTransaction({ ...txInput, userId: webUser.id });
+        if (success) {
+          DeviceEventEmitter.emit('tx_saved');
+          onClose();
+        }
+        return success;
+      }}
+      onClose={onClose}
+    />
   );
 }
 

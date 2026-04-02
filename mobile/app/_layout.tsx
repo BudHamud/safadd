@@ -5,7 +5,7 @@ import { View, StyleSheet } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import { AuthProvider, useAuth } from '../context/AuthContext';
-import { TransactionsProvider } from '../context/TransactionsContext';
+import { TransactionsProvider, useTransactions } from '../context/TransactionsContext';
 import { AdminReportsProvider } from '../context/AdminReportsContext';
 import { LanguageProvider, useLanguage } from '../context/LanguageContext';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
@@ -39,7 +39,8 @@ function getToastConfig(C: ReturnType<typeof useTheme>['theme']) {
 }
 
 function RootLayoutNav() {
-  const { session, loading, configError } = useAuth();
+  const { session, webUser, loading, configError } = useAuth();
+  const { transactions, loading: transactionsLoading } = useTransactions();
   const { theme: C, isDark } = useTheme();
   const { t, lang } = useLanguage();
   const dialog = useDialog();
@@ -49,6 +50,8 @@ function RootLayoutNav() {
   const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
   const [lastPromptedUpdateId, setLastPromptedUpdateId] = useState<string | null>(null);
   const hasCheckedForUpdateOnLaunch = useRef(false);
+  const inAuthGroup = segments[0] === 'login';
+  const awaitingInitialData = Boolean(session && webUser && !inAuthGroup && transactionsLoading && transactions.length === 0);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -61,15 +64,13 @@ function RootLayoutNav() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setMinSplashElapsed(true);
-    }, 1350);
+    }, 350);
 
     return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     if (loading) return;
-
-    const inAuthGroup = segments[0] === 'login';
 
     if (!session && !inAuthGroup) {
       // No session → go to login
@@ -151,7 +152,7 @@ function RootLayoutNav() {
   }
 
   // Show a full-screen spinner while the auth state is being resolved
-  if (loading || !minSplashElapsed) {
+  if (loading || awaitingInitialData || !minSplashElapsed) {
     return (
       <View style={[styles.splash, { backgroundColor: C.bg }]}>
         <AppSplash title="Safadd" subtitle={t('common.loading_data_hint')} />

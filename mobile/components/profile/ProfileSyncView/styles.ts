@@ -1,0 +1,58 @@
+import { StyleSheet } from 'react-native';
+import { Spacing, Radius, FontSize, FontWeight } from '../../../constants/theme';
+
+export const styles = StyleSheet.create({
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+  },
+  title: { fontSize: FontSize.md, fontWeight: FontWeight.black, letterSpacing: 0.5 },
+  closeBtn: { padding: Spacing.xs },
+  content: { padding: Spacing.base, gap: Spacing.lg },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  statusDot: { width: 10, height: 10, borderRadius: 5 },
+  statusLabel: { fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  card: {
+    padding: Spacing.lg,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    gap: Spacing.sm,
+  },
+  cardText: { fontSize: FontSize.sm, lineHeight: 20 },
+  cardBold: { fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  cardCaptionRow: { fontSize: FontSize.xs, letterSpacing: 0.5 },
+  syncCountNum: { fontSize: 36, fontWeight: FontWeight.black },
+  syncCountLabel: { fontSize: FontSize.xs, fontWeight: FontWeight.bold, letterSpacing: 1, textTransform: 'uppercase' },
+  syncOk: { fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  inlineRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  historyRow: {
+    borderTopWidth: 1,
+    paddingTop: Spacing.sm,
+    gap: Spacing.xs,
+  },
+  historyCopy: { gap: 4 },
+  historyTitle: { fontSize: FontSize.xs, fontWeight: FontWeight.black, letterSpacing: 0.8 },
+  historyText: { fontSize: FontSize.sm, lineHeight: 18 },
+  historyTime: { fontSize: FontSize.xs, fontWeight: FontWeight.bold },
+  swatch: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    marginLeft: 'auto',
+  },
+  refreshBtn: {
+    marginTop: Spacing.sm,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.block,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  refreshBtnDisabled: { opacity: 0.7 },
+  refreshText: { fontSize: FontSize.sm, fontWeight: FontWeight.black, letterSpacing: 1 },
+  offlineNote: { fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+});

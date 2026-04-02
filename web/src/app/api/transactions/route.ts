@@ -3,23 +3,18 @@ import { randomUUID } from 'crypto';
 import { requireAuth } from '../../../lib/supabase-server';
 import { prisma } from '../../../lib/prisma';
 import { consumeRateLimit, enforceSameOrigin, sanitizeTransactionInput } from '../../../lib/security';
-
-// Helper: obtener userId interno a partir del authId de Supabase
-async function resolveUserId(authId: string): Promise<string | null> {
-    const user = await prisma.user.findUnique({ where: { authId }, select: { id: true } });
-    return user?.id ?? null;
-}
+import { getPlanEntitlements, normalizePlanTier } from '../../../lib/plan';
 
 export async function GET(req: Request) {
     const { user, error, status } = await requireAuth(req);
     if (!user) return NextResponse.json({ error }, { status });
 
-    const userId = await resolveUserId(user.id);
-    if (!userId) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    const userProfile = await prisma.user.findUnique({ where: { authId: user.id }, select: { id: true } });
+    if (!userProfile?.id) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     try {
         const transactions = await prisma.transaction.findMany({
-            where: { userId },
+            where: { userId: userProfile.id },
             orderBy: { createdAt: 'desc' },
         });
         return NextResponse.json(transactions);
@@ -43,8 +38,8 @@ export async function POST(req: Request) {
     const { user, error, status } = await requireAuth(req);
     if (!user) return NextResponse.json({ error }, { status });
 
-    const userId = await resolveUserId(user.id);
-    if (!userId) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    const userProfile = await prisma.user.findUnique({ where: { authId: user.id }, select: { id: true, planTier: true } });
+    if (!userProfile?.id) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     try {
         const data = await req.json();
@@ -56,21 +51,66 @@ export async function POST(req: Request) {
                 return NextResponse.json({ error: 'Import demasiado grande' }, { status: 400 });
             }
 
+            const today = new Date().toISOString().slice(0, 10);
+            const importLimit = getPlanEntitlements(normalizePlanTier(userProfile.planTier)).importRowsPerDay;
+            const currentUsage = await prisma.importUsage.findUnique({
+                where: {
+                    userId_date: {
+                        userId: userProfile.id,
+                        date: today,
+                    },
+                },
+                select: { rowCount: true },
+            });
+            const usedRows = currentUsage?.rowCount ?? 0;
+
+            if (usedRows + data.length > importLimit) {
+                return NextResponse.json({
+                    errorCode: 'plan_limit_import_rows',
+                    limit: importLimit,
+                    requested: data.length,
+                    remaining: Math.max(importLimit - usedRows, 0),
+                    used: usedRows,
+                }, { status: 403 });
+            }
+
             const rows = [];
-            for (const item of data) {
+            for (const [index, item] of data.entries()) {
                 const sanitized = sanitizeTransactionInput(item);
                 if ('error' in sanitized) {
-                    return NextResponse.json({ error: sanitized.error }, { status: 400 });
+                    return NextResponse.json({
+                        error: sanitized.error,
+                        errorDetail: `Fila ${index + 1} con fecha ${String(item?.date ?? '') || '(vacía)'}`,
+                    }, { status: 400 });
                 }
 
                 rows.push({
                 id: randomUUID(),
                 ...sanitized.data,
-                userId,
+                userId: userProfile.id,
                 });
             }
 
-            await prisma.transaction.createMany({ data: rows });
+            await prisma.$transaction([
+                prisma.transaction.createMany({ data: rows }),
+                prisma.importUsage.upsert({
+                    where: {
+                        userId_date: {
+                            userId: userProfile.id,
+                            date: today,
+                        },
+                    },
+                    create: {
+                        id: randomUUID(),
+                        userId: userProfile.id,
+                        date: today,
+                        rowCount: data.length,
+                    },
+                    update: {
+                        rowCount: { increment: data.length },
+                    },
+                }),
+            ]);
 
             return NextResponse.json({ count: data.length });
         }
@@ -85,7 +125,7 @@ export async function POST(req: Request) {
         const tx = await prisma.transaction.create({
             data: {
                 id: randomUUID(),
-                userId,
+                userId: userProfile.id,
                 desc: sanitizedData.desc ?? 'Sin titulo',
                 amount: sanitizedData.amount ?? 0,
                 amountUSD: sanitizedData.amountUSD ?? null,
@@ -126,8 +166,8 @@ export async function DELETE(req: Request) {
     const { user, error, status } = await requireAuth(req);
     if (!user) return NextResponse.json({ error }, { status });
 
-    const userId = await resolveUserId(user.id);
-    if (!userId) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    const userProfile = await prisma.user.findUnique({ where: { authId: user.id }, select: { id: true } });
+    if (!userProfile?.id) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
@@ -135,9 +175,9 @@ export async function DELETE(req: Request) {
 
     try {
         if (id === 'all') {
-            await prisma.transaction.deleteMany({ where: { userId } });
+            await prisma.transaction.deleteMany({ where: { userId: userProfile.id } });
         } else {
-            const tx = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true } });
+            const tx = await prisma.transaction.findFirst({ where: { id, userId: userProfile.id }, select: { id: true } });
             if (!tx) return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
             await prisma.transaction.delete({ where: { id } });
         }
@@ -162,8 +202,8 @@ export async function PUT(req: Request) {
     const { user, error, status } = await requireAuth(req);
     if (!user) return NextResponse.json({ error }, { status });
 
-    const userId = await resolveUserId(user.id);
-    if (!userId) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    const userProfile = await prisma.user.findUnique({ where: { authId: user.id }, select: { id: true } });
+    if (!userProfile?.id) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     try {
         const data = await req.json();
@@ -175,7 +215,7 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: sanitized.error }, { status: 400 });
         }
 
-        const existing = await prisma.transaction.findFirst({ where: { id, userId }, select: { id: true } });
+        const existing = await prisma.transaction.findFirst({ where: { id, userId: userProfile.id }, select: { id: true } });
         if (!existing) return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
 
         const tx = await prisma.transaction.update({ where: { id }, data: sanitized.data });

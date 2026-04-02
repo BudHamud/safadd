@@ -139,6 +139,7 @@ export async function POST(req: NextRequest) {
         const pendingRecord = await prisma.pendingNotification.create({
             data: {
                 userId,
+                authId: auth.user.id,
                 bankName: parsed.bankId,
                 merchant: effectiveMerchant,
                 amount: parsed.amount,

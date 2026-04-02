@@ -16,6 +16,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useDashboardData } from '../../hooks/useDashboardData';
 import { useDisplayGoalAmount } from '../../hooks/useDisplayGoalAmount';
 import { useLanguage } from '../../context/LanguageContext';
+import { useDialog } from '../../context/DialogContext';
 import { formatAmount, formatMonthLabel, parseDateValue } from '../../lib/locale';
 import { Spacing, FontSize, FontWeight } from '../../constants/theme';
 import { StatsCategoryOverlay } from '@/components/stats/StatsCategoryOverlay';
@@ -38,8 +39,9 @@ function tagColor(tag: string): string {
 
 export default function StatsScreen() {
   const { theme: C } = useTheme();
-  const { webUser, profile, currency } = useAuth();
+  const { webUser, profile, currency, plan } = useAuth();
   const { lang, t } = useLanguage();
+  const dialog = useDialog();
   const { transactions, loading, refetch } = useDashboardData(webUser?.id ?? null, currency);
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear.toString());
@@ -49,6 +51,7 @@ export default function StatsScreen() {
 
   const sym = getCurrencySymbol(currency);
   const monthlyGoal = useDisplayGoalAmount(profile?.monthly_goal ?? 0);
+  const hasAdvancedAnalytics = plan?.entitlements.advancedAnalytics ?? false;
 
   const monthNames = useMemo(
     () => Array.from({ length: 12 }, (_, index) => formatMonthLabel(new Date(2024, index, 1), lang).toUpperCase()),
@@ -175,6 +178,11 @@ export default function StatsScreen() {
           <TouchableOpacity
             style={[styles.periodTrigger, { borderColor: C.border, backgroundColor: C.surfaceAlt }]}
             onPress={() => {
+              if (!hasAdvancedAnalytics) {
+                void dialog.alert(t('plan.advanced_analytics_locked_body'), t('plan.advanced_analytics_locked_title'));
+                return;
+              }
+
               haptic.selection();
               setShowPeriodModal(true);
             }}
@@ -247,11 +255,11 @@ export default function StatsScreen() {
             <View style={[styles.card, { backgroundColor: C.surface, borderColor: C.border }]}>
               <View style={styles.cardHeaderRow}>
                 <Text style={[styles.cardTitle, { color: C.textMuted }]}>{t('stats.spending_trend').toUpperCase()}</Text>
-                <Text style={[styles.cardHint, { color: C.textMuted }]}>{`${t('stats.avg').toUpperCase()} ${sym}${formatAmount(avgSpend, lang)}`}</Text>
+                {hasAdvancedAnalytics ? <Text style={[styles.cardHint, { color: C.textMuted }]}>{`${t('stats.avg').toUpperCase()} ${sym}${formatAmount(avgSpend, lang)}`}</Text> : null}
               </View>
 
               <View style={styles.trendArea}>
-                {avgSpend > 0 ? (
+                {hasAdvancedAnalytics && avgSpend > 0 ? (
                   <View style={[styles.avgLine, { bottom: 24 + (avgSpend / maxTrend) * 150, borderTopColor: C.border }]}> 
                     <Text style={[styles.avgLabel, { color: C.textMuted, backgroundColor: C.surface }]}>
                       {`${t('stats.avg')} ${sym}${formatAmount(avgSpend, lang)}`}
@@ -348,6 +356,11 @@ export default function StatsScreen() {
                       key={key}
                       activeOpacity={0.82}
                       onPress={() => {
+                        if (!hasAdvancedAnalytics) {
+                          void dialog.alert(t('plan.advanced_analytics_locked_body'), t('plan.advanced_analytics_locked_title'));
+                          return;
+                        }
+
                         haptic.selection();
                         setSelectedCat({ name: category.name, icon: category.icon, color: category.color });
                       }}
@@ -378,7 +391,7 @@ export default function StatsScreen() {
                           </Text>
                           <View style={styles.categoryMetaRow}>
                             <Text style={[styles.categoryMeta, { color: C.textMuted }]}>{`${pct.toFixed(1)}% ${t('stats.pct_total')}`.toUpperCase()}</Text>
-                            {selectedMonth === 'ALL' && yearDiff !== null ? (
+                            {hasAdvancedAnalytics && selectedMonth === 'ALL' && yearDiff !== null ? (
                               <Text style={[styles.categoryTrend, { color: yearDiff > 0 ? C.expenseText : C.primary }]}>
                                 {`${yearDiff > 0 ? '↑' : '↓'} ${Math.abs(yearDiff).toFixed(0)}% vs ${prevYear}`}
                               </Text>

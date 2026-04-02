@@ -14,11 +14,9 @@ type AdminReportsContextValue = {
 const AdminReportsContext = createContext<AdminReportsContextValue | undefined>(undefined);
 
 type AdminReportSummaryResponse = {
-  reports?: Array<{ id: string }>;
+  reports?: { id: string }[];
   summary?: { open?: number };
 };
-
-const POLL_INTERVAL_MS = 30000;
 
 export function AdminReportsProvider({ children }: { children: React.ReactNode }) {
   const { session, webUser } = useAuth();
@@ -27,67 +25,82 @@ export function AdminReportsProvider({ children }: { children: React.ReactNode }
   const [unseenCount, setUnseenCount] = useState(0);
   const knownIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
+  const requestRef = useRef<Promise<void> | null>(null);
   const isAdmin = (webUser?.role ?? '').toLowerCase() === 'admin';
 
   const load = useCallback(async (markAsSeen: boolean) => {
-    if (!isAdmin || !session) {
-      setOpenCount(0);
-      setUnseenCount(0);
-      knownIdsRef.current = new Set();
-      initializedRef.current = false;
-      return;
+    if (requestRef.current) {
+      return requestRef.current;
     }
 
-    try {
-      const response = await apiFetch('/api/debug-reports?scope=admin&status=open&limit=20', undefined, session);
-      const payload = await response.json().catch(() => ({} as AdminReportSummaryResponse));
-      if (!response.ok) return;
-
-      const reports = Array.isArray(payload?.reports) ? payload.reports : [];
-      const currentIds = reports.map((report) => report.id);
-      setOpenCount(typeof payload?.summary?.open === 'number' ? payload.summary.open : currentIds.length);
-
-      if (!initializedRef.current || markAsSeen) {
-        knownIdsRef.current = new Set(currentIds);
-        initializedRef.current = true;
+    const request = (async () => {
+      if (!isAdmin || !session) {
+        setOpenCount(0);
         setUnseenCount(0);
+        knownIdsRef.current = new Set();
+        initializedRef.current = false;
         return;
       }
 
-      const newIds = currentIds.filter((id) => !knownIdsRef.current.has(id));
-      if (newIds.length > 0) {
-        newIds.forEach((id) => knownIdsRef.current.add(id));
-        setUnseenCount((current) => current + newIds.length);
-        Toast.show({
-          type: 'success',
-          text1: t('mobile.admin_reports.notification_title'),
-          text2: t('mobile.admin_reports.notification_body', { count: newIds.length }),
-        });
+      try {
+        const response = await apiFetch('/api/debug-reports?scope=admin&status=open&limit=20', undefined, session);
+        const payload = await response.json().catch(() => ({} as AdminReportSummaryResponse));
+        if (!response.ok) {
+          setOpenCount(0);
+          setUnseenCount(0);
+          knownIdsRef.current = new Set();
+          initializedRef.current = false;
+          return;
+        }
+
+        const reports = Array.isArray(payload?.reports) ? payload.reports : [];
+        const currentIds = reports.map((report: { id: string }) => report.id);
+        setOpenCount(typeof payload?.summary?.open === 'number' ? payload.summary.open : currentIds.length);
+
+        if (!initializedRef.current || markAsSeen) {
+          knownIdsRef.current = new Set(currentIds);
+          initializedRef.current = true;
+          setUnseenCount(0);
+          return;
+        }
+
+        const newIds = currentIds.filter((id: string) => !knownIdsRef.current.has(id));
+        if (newIds.length > 0) {
+          newIds.forEach((id: string) => knownIdsRef.current.add(id));
+          setUnseenCount((current) => current + newIds.length);
+          Toast.show({
+            type: 'success',
+            text1: t('mobile.admin_reports.notification_title'),
+            text2: t('mobile.admin_reports.notification_body', { count: newIds.length }),
+          });
+        }
+      } catch {
+        // Ignore transient refresh failures.
+      } finally {
+        requestRef.current = null;
       }
-    } catch {
-      // Ignore transient polling failures.
-    }
+    })();
+
+    requestRef.current = request;
+    return request;
   }, [isAdmin, session, t]);
 
   useEffect(() => {
-    void load(true);
-  }, [load]);
-
-  useEffect(() => {
-    if (!isAdmin || !session) return undefined;
-    const interval = setInterval(() => {
-      void load(false);
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [isAdmin, load, session]);
+    if (isAdmin && session) return;
+    setOpenCount(0);
+    setUnseenCount(0);
+    knownIdsRef.current = new Set();
+    initializedRef.current = false;
+  }, [isAdmin, session]);
 
   const refresh = useCallback(async () => {
     await load(false);
   }, [load]);
 
   const markSeen = useCallback(async () => {
-    await load(true);
-  }, [load]);
+    initializedRef.current = true;
+    setUnseenCount(0);
+  }, []);
 
   const value = useMemo(() => ({ openCount, unseenCount, refresh, markSeen }), [markSeen, openCount, refresh, unseenCount]);
 

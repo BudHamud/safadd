@@ -47,6 +47,19 @@ function missingDebugReportsResponse() {
   );
 }
 
+async function hasDebugReportsTable() {
+  const rows = await prisma.$queryRaw<Array<{ present: boolean }>>(Prisma.sql`
+    select exists (
+      select 1
+      from information_schema.tables
+      where table_schema = 'public'
+        and table_name = 'debug_reports'
+    ) as present
+  `);
+
+  return rows[0]?.present === true;
+}
+
 function normalizeBase64(value: unknown) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -358,6 +371,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: appUser.error }, { status: appUser.status });
   }
 
+  if (!(await hasDebugReportsTable())) {
+    return missingDebugReportsResponse();
+  }
+
   let reports: DebugReportRow[] = [];
   try {
     reports = await listReports({
@@ -420,6 +437,10 @@ export async function POST(req: Request) {
   const appUser = await resolveAppUser(user);
   if (appUser.error || !appUser.currentUser) {
     return NextResponse.json({ error: appUser.error ?? 'No se pudo resolver el perfil de usuario' }, { status: appUser.status });
+  }
+
+  if (!(await hasDebugReportsTable())) {
+    return missingDebugReportsResponse();
   }
 
   const supabase = createAuthenticatedSupabaseClient(accessToken ?? '');
@@ -500,6 +521,10 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: 'Falta el reporte' }, { status: 400 });
   }
 
+  if (!(await hasDebugReportsTable())) {
+    return missingDebugReportsResponse();
+  }
+
   const body = await req.json().catch(() => null);
   const nextStatus = normalizeReportStatus(body?.status);
   if (!nextStatus || nextStatus === 'all') {
@@ -547,6 +572,10 @@ export async function DELETE(req: Request) {
   const reportId = new URL(req.url).searchParams.get('id');
   if (!reportId) {
     return NextResponse.json({ error: 'Falta el reporte' }, { status: 400 });
+  }
+
+  if (!(await hasDebugReportsTable())) {
+    return missingDebugReportsResponse();
   }
 
   const supabase = createAuthenticatedSupabaseClient(accessToken ?? '');
