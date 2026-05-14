@@ -19,6 +19,7 @@ type ParsedLineItem = {
   qty?: unknown;
   unitPrice?: unknown;
   totalPrice?: unknown;
+  lineTotal?: unknown;
   discount?: unknown;
   sourceLine?: unknown;
 };
@@ -34,11 +35,19 @@ type ParsedScanPayload = {
   purchaseSummaryRaw?: unknown;
   purchaseSectionLines?: unknown;
   ocrLines?: unknown;
+  simpleItems?: unknown;
   confidence?: unknown;
   subtotal?: unknown;
   discountTotal?: unknown;
   tax?: unknown;
   items?: unknown;
+};
+
+type SimpleTicketItem = {
+  title: string;
+  qty: number;
+  lineTotal: number;
+  sourceLine: string;
 };
 
 function toFiniteNumber(value: unknown): number | null {
@@ -165,141 +174,182 @@ function formatCompactAmount(value: number, currency: string): string {
   })}`;
 }
 
-function normalizeItemName(value: string): string {
-  return value
-    .replace(/[|¦]+/g, " ")
+function extractDecimalValues(text: string): number[] {
+  const matches = text.match(/[-+]?\d+[.,]\d{1,2}/g) ?? [];
+  return matches
+    .map((token) => toFiniteNumber(token))
+    .filter((value): value is number => value !== null);
+}
+
+function parseQty(value: unknown, sourceLine: string): number {
+  const fromValue = toFiniteNumber(value);
+  if (fromValue !== null && fromValue > 0) return fromValue;
+
+  const qtyMatch = sourceLine.match(/(?:x|X)\s*(\d+(?:[.,]\d+)?)/) ?? sourceLine.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X)/);
+  if (!qtyMatch) return 1;
+
+  const parsed = toFiniteNumber(qtyMatch[1]);
+  return parsed !== null && parsed > 0 ? parsed : 1;
+}
+
+function cleanTitle(text: string): string {
+  return text
+    .replace(/\b\d{6,}\b/g, " ")
+    .replace(/[-+]?\d+[.,]\d{1,2}/g, " ")
+    .replace(/\b(?:x|X)\s*\d+(?:[.,]\d+)?\b/g, " ")
+    .replace(/[₪$€]/g, " ")
+    .replace(/[|¦:]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function extractNameFromSourceLine(sourceLine: string): string {
-  if (!sourceLine) return "";
-
-  return sourceLine
-    .replace(/\b\d{4,}\b/g, " ")
-    .replace(/[-+]?\d+[.,]\d{1,2}\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+function isSimpleSummaryLine(line: string): boolean {
+  return isSummaryFooterLine(line) || isPurchaseHeaderLine(line);
 }
 
-function isSummaryLikeItem(name: string, sourceLine: string, lineAmount: number, totalAmount: number | null): boolean {
-  const text = `${name} ${sourceLine}`.toLowerCase();
-  const softSummaryTokens = [
-    "suma",
-    "subtotal",
-    "total",
-    "tax",
-    "iva",
-    "impuesto",
-    "descuento",
-    "discount",
-    "סכום",
-    "סהכ",
-  ];
+function buildSimpleItemFromLine(line: string): SimpleTicketItem | null {
+  if (!line || isSimpleSummaryLine(line)) return null;
 
-  const hardSummaryTokens = ["לתשלום", "מעמ", "תשלום"];
+  const amounts = extractDecimalValues(line);
+  if (amounts.length === 0) return null;
 
-  if (hardSummaryTokens.some((token) => text.includes(token))) {
-    return true;
-  }
+  // Keep the final amount shown in the line (avoids picking per-kg price).
+  const lineTotal = amounts[amounts.length - 1];
+  if (!Number.isFinite(lineTotal)) return null;
 
-  if (!softSummaryTokens.some((token) => text.includes(token))) {
-    return false;
-  }
+  const title = cleanTitle(line);
+  if (!title) return null;
 
-  if (totalAmount === null) return false;
-  return Math.abs(lineAmount - totalAmount) <= 0.05;
+  return {
+    title,
+    qty: parseQty(null, line),
+    lineTotal,
+    sourceLine: line,
+  };
 }
 
-type NormalizedItem = {
-  name: string;
-  qty: number;
-  lineTotal: number;
-  unitPrice: number | null;
-  discount: number;
-};
+function dedupeSimpleItems(items: SimpleTicketItem[]): SimpleTicketItem[] {
+  const unique: SimpleTicketItem[] = [];
 
-function normalizeScannedItems(rawPayload: ParsedScanPayload): NormalizedItem[] {
+  for (const item of items) {
+    const exists = unique.some((candidate) =>
+      candidate.title === item.title
+      && Math.abs(candidate.lineTotal - item.lineTotal) <= 0.009
+      && Math.abs(candidate.qty - item.qty) <= 0.001,
+    );
+    if (!exists) unique.push(item);
+  }
+
+  return unique;
+}
+
+function buildSimpleItemsFromPayloadItems(rawPayload: ParsedScanPayload): SimpleTicketItem[] {
   const rawItems = Array.isArray(rawPayload.items)
     ? (rawPayload.items as ParsedLineItem[])
     : [];
-  const totalAmount = toFiniteNumber(rawPayload.amount);
 
   return rawItems
     .map((item) => {
-      const inputName = normalizeItemName(toSafeText(item.name));
       const sourceLine = toSafeText(item.sourceLine);
-      const fallbackName = normalizeItemName(extractNameFromSourceLine(sourceLine));
-      const name = inputName || fallbackName;
-      const qty = toFiniteNumber(item.qty);
-      const unitPrice = toFiniteNumber(item.unitPrice);
-      const totalPrice = toFiniteNumber(item.totalPrice);
-      const discount = toFiniteNumber(item.discount);
+      const sourceAmounts = extractDecimalValues(sourceLine);
+      const candidateLineTotal =
+        toFiniteNumber(item.totalPrice)
+        ?? toFiniteNumber(item.lineTotal)
+        ?? (sourceAmounts.length > 0 ? sourceAmounts[sourceAmounts.length - 1] : null)
+        ?? toFiniteNumber(item.unitPrice);
 
-      const lineTotal = totalPrice ?? unitPrice;
-      if (!name || lineTotal === null) return null;
-      if (isSummaryLikeItem(name, sourceLine, lineTotal, totalAmount)) return null;
+      if (candidateLineTotal === null) return null;
+
+      const name = cleanTitle(toSafeText(item.name)) || cleanTitle(sourceLine);
+      if (!name) return null;
 
       return {
-        name,
-        qty: qty !== null && qty > 0 ? qty : 1,
-        lineTotal,
-        unitPrice,
-        discount: discount ?? 0,
+        title: name,
+        qty: parseQty(item.qty, sourceLine),
+        lineTotal: candidateLineTotal,
+        sourceLine,
       };
     })
-    .filter((entry): entry is NormalizedItem => Boolean(entry));
+    .filter((entry): entry is SimpleTicketItem => Boolean(entry));
+}
+
+function buildSimpleItemsFromLines(rawPayload: ParsedScanPayload): SimpleTicketItem[] {
+  const fromPurchaseSection = toSafeLines(rawPayload.purchaseSectionLines);
+  const fromOcrLines = extractPurchaseSectionFromOcrLines(toSafeLines(rawPayload.ocrLines));
+  const fromRawSummary = toSafeText(rawPayload.purchaseSummaryRaw)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return uniqueInOrder([...fromPurchaseSection, ...fromOcrLines, ...fromRawSummary])
+    .map((line) => buildSimpleItemFromLine(line))
+    .filter((entry): entry is SimpleTicketItem => Boolean(entry));
+}
+
+function evaluateMath(items: SimpleTicketItem[], totalAmount: number | null) {
+  const sum = items.reduce((acc, item) => acc + item.lineTotal, 0);
+  if (totalAmount === null) {
+    return { sum, diff: 0, ok: items.length > 0 };
+  }
+
+  const diff = Math.abs(sum - totalAmount);
+  const tolerance = Math.max(0.75, totalAmount * 0.04);
+  return { sum, diff, ok: diff <= tolerance && items.length > 0 };
+}
+
+function selectSimpleItems(rawPayload: ParsedScanPayload) {
+  const totalAmount = toFiniteNumber(rawPayload.amount);
+  const fromPayloadItems = dedupeSimpleItems(buildSimpleItemsFromPayloadItems(rawPayload));
+  const fromLines = dedupeSimpleItems(buildSimpleItemsFromLines(rawPayload));
+
+  const payloadEval = evaluateMath(fromPayloadItems, totalAmount);
+  const lineEval = evaluateMath(fromLines, totalAmount);
+
+  if (payloadEval.ok) {
+    return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
+  }
+
+  if (lineEval.ok) {
+    return { items: fromLines, ...lineEval, reanalyzed: true };
+  }
+
+  if (fromLines.length > fromPayloadItems.length && lineEval.diff <= payloadEval.diff + 0.01) {
+    return { items: fromLines, ...lineEval, reanalyzed: true };
+  }
+
+  return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
 }
 
 function buildItemizedDetails(rawPayload: ParsedScanPayload, currency: string): string {
-  void currency;
+  const selected = selectSimpleItems(rawPayload);
+
+  if (selected.items.length > 0) {
+    return selected.items
+      .map((item) => `- x${item.qty} ${item.title} ${formatCompactAmount(item.lineTotal, currency)}`)
+      .join("\n");
+  }
 
   const rawSummary = toSafeText(rawPayload.purchaseSummaryRaw);
-  if (rawSummary) {
-    return rawSummary;
-  }
-
-  const purchaseSectionLines = toSafeLines(rawPayload.purchaseSectionLines);
-  if (purchaseSectionLines.length > 0) {
-    return uniqueInOrder(purchaseSectionLines).join("\n");
-  }
-
-  const ocrLines = toSafeLines(rawPayload.ocrLines);
-  if (ocrLines.length > 0) {
-    const extractedSection = extractPurchaseSectionFromOcrLines(ocrLines);
-    if (extractedSection.length > 0) {
-      return extractedSection.join("\n");
-    }
-  }
-
-  const rawItems = Array.isArray(rawPayload.items)
-    ? (rawPayload.items as ParsedLineItem[])
-    : [];
-
-  const sourceLines = rawItems
-    .map((item) => toSafeText(item.sourceLine))
-    .filter(Boolean);
-
-  if (sourceLines.length > 0) {
-    return uniqueInOrder(sourceLines).join("\n");
-  }
+  if (rawSummary) return rawSummary;
 
   return toSafeText(rawPayload.details);
 }
 
 function buildVirtualTicket(rawPayload: ParsedScanPayload, currency: string) {
-  const items = normalizeScannedItems(rawPayload).map((item) => ({
-    name: item.name,
-    qty: item.qty,
-    lineTotal: item.lineTotal,
-    unitPrice: item.unitPrice,
-    discount: item.discount,
-  }));
+  const selected = selectSimpleItems(rawPayload);
 
   return {
     currency,
     total: toFiniteNumber(rawPayload.amount) ?? 0,
-    items,
+    items: selected.items.map((item) => ({
+      name: item.title,
+      qty: item.qty,
+      lineTotal: item.lineTotal,
+      sourceLine: item.sourceLine,
+    })),
+    mathCheckPassed: selected.ok,
+    mathDiff: selected.diff,
+    reanalyzed: selected.reanalyzed,
   };
 }
 
@@ -319,6 +369,14 @@ RESPONDE ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones, sin b
   "purchaseSummaryRaw": string,
   "purchaseSectionLines": [string],
   "ocrLines": [string],
+  "simpleItems": [
+    {
+      "title": string,
+      "qty": number,
+      "lineTotal": number,
+      "sourceLine": string
+    }
+  ],
   "details": string,
   "confidence": number,
   "subtotal": number,
@@ -345,6 +403,7 @@ Reglas:
 - "purchaseSummaryRaw": transcripción LITERAL del bloque de compra (ítems/descuentos) tal cual aparece en el ticket, mismo idioma, mismo orden de líneas, sin traducir, sin resumir y sin corregir OCR.
 - "purchaseSectionLines": mismo contenido que purchaseSummaryRaw, pero como array (1 elemento por línea visual del ticket).
 - "ocrLines": OCR completo de todo el ticket en orden visual estricto (1 elemento por línea visual).
+- "simpleItems": lista SIMPLE para UI: solo título, unidades y precio final pagado por línea.
 - "details": copia exacta de "purchaseSummaryRaw".
 - "confidence": 0 a 100, qué tan seguro estás de la lectura
 - "subtotal": subtotal antes de descuentos e impuestos cuando exista
@@ -357,6 +416,9 @@ Reglas:
 - Si una línea es ambigua, conserva igual el item con el mejor nombre posible en lugar de descartarlo.
 - Si no ves cantidad explícita, usa qty=1.
 - Para cada item agrega "sourceLine" con el texto OCR exacto de la línea original de ese item.
+- En "simpleItems", lineTotal DEBE ser el importe final cobrado de esa línea, no el precio por kilo/unidad.
+- Ejemplo: si la línea dice "frutilla 22.5 x k 20.86", extrae title="frutilla" y lineTotal=20.86.
+- En "simpleItems", qty debe ser unidades compradas (si no se ve, usar 1).
 - No normalices texto, no cambies signos, no transliteres, no traduzcas hebreo/español/inglés.
 - Prioriza fidelidad textual por encima de interpretación semántica.
 - Si dudas entre dos lecturas, conserva la lectura más literal que aparece en la imagen.
@@ -541,7 +603,12 @@ export async function POST(req: NextRequest) {
         ? parsed.currency
         : "USD";
 
-    const resolvedDetails = buildItemizedDetails(parsed, resolvedCurrency);
+    const selectedSimple = selectSimpleItems(parsed);
+    const resolvedDetails = selectedSimple.items.length > 0
+      ? selectedSimple.items
+        .map((item) => `- x${item.qty} ${item.title} ${formatCompactAmount(item.lineTotal, resolvedCurrency)}`)
+        .join("\n")
+      : buildItemizedDetails(parsed, resolvedCurrency);
 
     return NextResponse.json({
       amount: toFiniteNumber(parsed.amount) ?? 0,
@@ -553,6 +620,10 @@ export async function POST(req: NextRequest) {
       purchaseSummaryRaw: toSafeText(parsed.purchaseSummaryRaw) || resolvedDetails,
       purchaseSectionLines: toSafeLines(parsed.purchaseSectionLines),
       ocrLines: toSafeLines(parsed.ocrLines),
+      simpleItems: selectedSimple.items,
+      mathCheckPassed: selectedSimple.ok,
+      mathDiff: selectedSimple.diff,
+      reanalyzed: selectedSimple.reanalyzed,
       confidence: toFiniteNumber(parsed.confidence) ?? 70,
       items: Array.isArray(parsed.items) ? parsed.items : [],
       subtotal: toFiniteNumber(parsed.subtotal),
