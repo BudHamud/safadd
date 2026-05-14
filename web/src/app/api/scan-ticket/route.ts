@@ -232,11 +232,13 @@ function dedupeSimpleItems(items: SimpleTicketItem[]): SimpleTicketItem[] {
   const unique: SimpleTicketItem[] = [];
 
   for (const item of items) {
-    const exists = unique.some((candidate) =>
-      candidate.title === item.title
-      && Math.abs(candidate.lineTotal - item.lineTotal) <= 0.009
-      && Math.abs(candidate.qty - item.qty) <= 0.001,
-    );
+    const normalizedTitle = item.title.toLowerCase();
+    const exists = unique.some((candidate) => {
+      const candidateTitle = candidate.title.toLowerCase();
+      const titleMatches = candidateTitle === normalizedTitle || candidateTitle.includes(normalizedTitle) || normalizedTitle.includes(candidateTitle);
+      const amountMatches = Math.abs(candidate.lineTotal - item.lineTotal) <= 0.03;
+      return titleMatches && amountMatches;
+    });
     if (!exists) unique.push(item);
   }
 
@@ -281,7 +283,9 @@ function buildSimpleItemsFromLines(rawPayload: ParsedScanPayload): SimpleTicketI
     .map((line) => line.trim())
     .filter(Boolean);
 
-  return uniqueInOrder([...fromPurchaseSection, ...fromOcrLines, ...fromRawSummary])
+  const fallbackOcrLines = toSafeLines(rawPayload.ocrLines).filter((line) => looksLikeItemLine(line) && !isSimpleSummaryLine(line));
+
+  return uniqueInOrder([...fromPurchaseSection, ...fromOcrLines, ...fromRawSummary, ...fallbackOcrLines])
     .map((line) => buildSimpleItemFromLine(line))
     .filter((entry): entry is SimpleTicketItem => Boolean(entry));
 }
@@ -301,9 +305,31 @@ function selectSimpleItems(rawPayload: ParsedScanPayload) {
   const totalAmount = toFiniteNumber(rawPayload.amount);
   const fromPayloadItems = dedupeSimpleItems(buildSimpleItemsFromPayloadItems(rawPayload));
   const fromLines = dedupeSimpleItems(buildSimpleItemsFromLines(rawPayload));
+  const merged = dedupeSimpleItems([...fromLines, ...fromPayloadItems]);
 
   const payloadEval = evaluateMath(fromPayloadItems, totalAmount);
   const lineEval = evaluateMath(fromLines, totalAmount);
+  const mergedEval = evaluateMath(merged, totalAmount);
+
+  if (merged.length > 0) {
+    if (mergedEval.ok) {
+      return { items: merged, ...mergedEval, reanalyzed: true };
+    }
+
+    if (fromLines.length > fromPayloadItems.length) {
+      return { items: merged, ...mergedEval, reanalyzed: true };
+    }
+
+    if (payloadEval.ok) {
+      return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
+    }
+
+    if (lineEval.ok) {
+      return { items: fromLines, ...lineEval, reanalyzed: true };
+    }
+
+    return { items: merged, ...mergedEval, reanalyzed: true };
+  }
 
   if (payloadEval.ok) {
     return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
@@ -313,7 +339,7 @@ function selectSimpleItems(rawPayload: ParsedScanPayload) {
     return { items: fromLines, ...lineEval, reanalyzed: true };
   }
 
-  if (fromLines.length > fromPayloadItems.length && lineEval.diff <= payloadEval.diff + 0.01) {
+  if (fromLines.length >= fromPayloadItems.length) {
     return { items: fromLines, ...lineEval, reanalyzed: true };
   }
 
