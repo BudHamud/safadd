@@ -31,6 +31,7 @@ type ParsedScanPayload = {
   tag?: unknown;
   date?: unknown;
   details?: unknown;
+  purchaseSummaryRaw?: unknown;
   confidence?: unknown;
   subtotal?: unknown;
   discountTotal?: unknown;
@@ -167,19 +168,30 @@ function normalizeScannedItems(rawPayload: ParsedScanPayload): NormalizedItem[] 
 }
 
 function buildItemizedDetails(rawPayload: ParsedScanPayload, currency: string): string {
-  const lines = normalizeScannedItems(rawPayload).map((item) => {
-    const discountText = item.discount > 0
-      ? ` (desc. ${formatCompactAmount(item.discount, currency)})`
-      : "";
+  void currency;
 
-    return `- x${item.qty} ${item.name} ${formatCompactAmount(item.lineTotal, currency)}${discountText}`;
-  });
-
-  if (lines.length === 0) {
-    return toSafeText(rawPayload.details);
+  const rawSummary = toSafeText(rawPayload.purchaseSummaryRaw);
+  if (rawSummary) {
+    return rawSummary;
   }
 
-  return lines.join("\n");
+  const rawItems = Array.isArray(rawPayload.items)
+    ? (rawPayload.items as ParsedLineItem[])
+    : [];
+
+  const sourceLines = rawItems
+    .map((item) => toSafeText(item.sourceLine))
+    .filter(Boolean);
+
+  if (sourceLines.length > 0) {
+    const uniqueInOrder: string[] = [];
+    for (const line of sourceLines) {
+      if (!uniqueInOrder.includes(line)) uniqueInOrder.push(line);
+    }
+    return uniqueInOrder.join("\n");
+  }
+
+  return toSafeText(rawPayload.details);
 }
 
 function buildVirtualTicket(rawPayload: ParsedScanPayload, currency: string) {
@@ -211,6 +223,7 @@ RESPONDE ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones, sin b
   "desc": string,
   "tag": string,
   "date": string,
+  "purchaseSummaryRaw": string,
   "details": string,
   "confidence": number,
   "subtotal": number,
@@ -234,7 +247,8 @@ Reglas:
 - "desc": Nombre del comercio/servicio conciso (ej: "McDonald's", "YPF", "Amazon")
 - "tag": Categoría sugerida, DEBE ser una de: alimentacion, transporte, salud, entretenimiento, viajes, suscripcion, servicios, educacion, ropa, hogar, tecnologia, otro
 - "date": Fecha en formato YYYY-MM-DD. Si no hay fecha visible, usa "${new Date().toISOString().split("T")[0]}"
-- "details": Resumen libre del ticket (si no puedes extraer ítems)
+- "purchaseSummaryRaw": transcripción LITERAL del bloque de compra (ítems/descuentos) tal cual aparece en el ticket, mismo idioma, mismo orden de líneas, sin traducir, sin resumir y sin corregir OCR.
+- "details": copia exacta de "purchaseSummaryRaw".
 - "confidence": 0 a 100, qué tan seguro estás de la lectura
 - "subtotal": subtotal antes de descuentos e impuestos cuando exista
 - "discountTotal": descuento total aplicado en el ticket (0 si no hay)
@@ -246,6 +260,7 @@ Reglas:
 - Si una línea es ambigua, conserva igual el item con el mejor nombre posible en lugar de descartarlo.
 - Si no ves cantidad explícita, usa qty=1.
 - Para cada item agrega "sourceLine" con el texto OCR exacto de la línea original de ese item.
+- No normalices texto, no cambies signos, no transliteres, no traduzcas hebreo/español/inglés.
 - Si el ticket muestra múltiples subtotales, toma el TOTAL GENERAL
 - Si hay propinas opcionales, NO las incluyas salvo que el monto final ya las incluya
 - Si el documento no parece un comprobante de pago, devuelve { "error": "No es un comprobante" }`;
@@ -436,6 +451,7 @@ export async function POST(req: NextRequest) {
       tag: toSafeText(parsed.tag) || "otro",
       date: toSafeText(parsed.date) || new Date().toISOString().split("T")[0],
       details: resolvedDetails,
+      purchaseSummaryRaw: toSafeText(parsed.purchaseSummaryRaw) || resolvedDetails,
       confidence: toFiniteNumber(parsed.confidence) ?? 70,
       items: Array.isArray(parsed.items) ? parsed.items : [],
       subtotal: toFiniteNumber(parsed.subtotal),
