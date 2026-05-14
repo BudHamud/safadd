@@ -14,6 +14,190 @@ import {
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+type ParsedLineItem = {
+  name?: unknown;
+  qty?: unknown;
+  unitPrice?: unknown;
+  totalPrice?: unknown;
+  discount?: unknown;
+  sourceLine?: unknown;
+};
+
+type ParsedScanPayload = {
+  error?: unknown;
+  amount?: unknown;
+  currency?: unknown;
+  desc?: unknown;
+  tag?: unknown;
+  date?: unknown;
+  details?: unknown;
+  confidence?: unknown;
+  subtotal?: unknown;
+  discountTotal?: unknown;
+  tax?: unknown;
+  items?: unknown;
+};
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/[^\d,.-]/g, "").replace(/,/g, ".");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toSafeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function formatAmount(value: number, currency: string): string {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    ARS: "AR$",
+    ILS: "₪",
+    EUR: "€",
+  };
+  const symbol = symbols[currency] ?? `${currency} `;
+  return `${symbol}${value.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatCompactAmount(value: number, currency: string): string {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    ARS: "AR$",
+    ILS: "₪",
+    EUR: "€",
+  };
+  const symbol = symbols[currency] ?? `${currency} `;
+  return `${symbol}${value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function normalizeItemName(value: string): string {
+  return value
+    .replace(/[|¦]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractNameFromSourceLine(sourceLine: string): string {
+  if (!sourceLine) return "";
+
+  return sourceLine
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/[-+]?\d+[.,]\d{1,2}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSummaryLikeItem(name: string, sourceLine: string, lineAmount: number, totalAmount: number | null): boolean {
+  const text = `${name} ${sourceLine}`.toLowerCase();
+  const softSummaryTokens = [
+    "suma",
+    "subtotal",
+    "total",
+    "tax",
+    "iva",
+    "impuesto",
+    "descuento",
+    "discount",
+    "סכום",
+    "סהכ",
+  ];
+
+  const hardSummaryTokens = ["לתשלום", "מעמ", "תשלום"];
+
+  if (hardSummaryTokens.some((token) => text.includes(token))) {
+    return true;
+  }
+
+  if (!softSummaryTokens.some((token) => text.includes(token))) {
+    return false;
+  }
+
+  if (totalAmount === null) return false;
+  return Math.abs(lineAmount - totalAmount) <= 0.05;
+}
+
+type NormalizedItem = {
+  name: string;
+  qty: number;
+  lineTotal: number;
+  unitPrice: number | null;
+  discount: number;
+};
+
+function normalizeScannedItems(rawPayload: ParsedScanPayload): NormalizedItem[] {
+  const rawItems = Array.isArray(rawPayload.items)
+    ? (rawPayload.items as ParsedLineItem[])
+    : [];
+  const totalAmount = toFiniteNumber(rawPayload.amount);
+
+  return rawItems
+    .map((item) => {
+      const inputName = normalizeItemName(toSafeText(item.name));
+      const sourceLine = toSafeText(item.sourceLine);
+      const fallbackName = normalizeItemName(extractNameFromSourceLine(sourceLine));
+      const name = inputName || fallbackName;
+      const qty = toFiniteNumber(item.qty);
+      const unitPrice = toFiniteNumber(item.unitPrice);
+      const totalPrice = toFiniteNumber(item.totalPrice);
+      const discount = toFiniteNumber(item.discount);
+
+      const lineTotal = totalPrice ?? unitPrice;
+      if (!name || lineTotal === null) return null;
+      if (isSummaryLikeItem(name, sourceLine, lineTotal, totalAmount)) return null;
+
+      return {
+        name,
+        qty: qty !== null && qty > 0 ? qty : 1,
+        lineTotal,
+        unitPrice,
+        discount: discount ?? 0,
+      };
+    })
+    .filter((entry): entry is NormalizedItem => Boolean(entry));
+}
+
+function buildItemizedDetails(rawPayload: ParsedScanPayload, currency: string): string {
+  const lines = normalizeScannedItems(rawPayload).map((item) => {
+    const discountText = item.discount > 0
+      ? ` (desc. ${formatCompactAmount(item.discount, currency)})`
+      : "";
+
+    return `- x${item.qty} ${item.name} ${formatCompactAmount(item.lineTotal, currency)}${discountText}`;
+  });
+
+  if (lines.length === 0) {
+    return toSafeText(rawPayload.details);
+  }
+
+  return lines.join("\n");
+}
+
+function buildVirtualTicket(rawPayload: ParsedScanPayload, currency: string) {
+  const items = normalizeScannedItems(rawPayload).map((item) => ({
+    name: item.name,
+    qty: item.qty,
+    lineTotal: item.lineTotal,
+    unitPrice: item.unitPrice,
+    discount: item.discount,
+  }));
+
+  return {
+    currency,
+    total: toFiniteNumber(rawPayload.amount) ?? 0,
+    items,
+  };
+}
+
 // ── Rate limit config ──
 const DAILY_SCAN_LIMIT = 15; // Max scans per day for regular users
 
@@ -28,7 +212,20 @@ RESPONDE ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones, sin b
   "tag": string,
   "date": string,
   "details": string,
-  "confidence": number
+  "confidence": number,
+  "subtotal": number,
+  "discountTotal": number,
+  "tax": number,
+  "items": [
+    {
+      "name": string,
+      "qty": number,
+      "unitPrice": number,
+      "totalPrice": number,
+      "discount": number,
+      "sourceLine": string
+    }
+  ]
 }
 
 Reglas:
@@ -37,8 +234,18 @@ Reglas:
 - "desc": Nombre del comercio/servicio conciso (ej: "McDonald's", "YPF", "Amazon")
 - "tag": Categoría sugerida, DEBE ser una de: alimentacion, transporte, salud, entretenimiento, viajes, suscripcion, servicios, educacion, ropa, hogar, tecnologia, otro
 - "date": Fecha en formato YYYY-MM-DD. Si no hay fecha visible, usa "${new Date().toISOString().split("T")[0]}"
-- "details": Resumen breve de los ítems o descripción del servicio (máximo 100 caracteres)
+- "details": Resumen libre del ticket (si no puedes extraer ítems)
 - "confidence": 0 a 100, qué tan seguro estás de la lectura
+- "subtotal": subtotal antes de descuentos e impuestos cuando exista
+- "discountTotal": descuento total aplicado en el ticket (0 si no hay)
+- "tax": impuestos totales cuando estén explícitos
+- "items": lista de líneas detectadas del ticket con nombre, cantidad, precio unitario, total por línea y descuento por ítem (si existe)
+- Cada item DEBE salir de la misma línea del ticket donde aparece su precio. No mezcles descripción desde línea superior o inferior.
+- Deben salir TODAS las líneas de producto detectadas en el ticket, no omitas ninguna por baja confianza.
+- Ignora líneas de resumen como subtotal/total/impuestos/descuentos/sumas (ej: "סהכ", "לתשלום", "מעמ").
+- Si una línea es ambigua, conserva igual el item con el mejor nombre posible en lugar de descartarlo.
+- Si no ves cantidad explícita, usa qty=1.
+- Para cada item agrega "sourceLine" con el texto OCR exacto de la línea original de ese item.
 - Si el ticket muestra múltiples subtotales, toma el TOTAL GENERAL
 - Si hay propinas opcionales, NO las incluyas salvo que el monto final ya las incluya
 - Si el documento no parece un comprobante de pago, devuelve { "error": "No es un comprobante" }`;
@@ -172,7 +379,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Parse JSON response
-    let parsed: any;
+    let parsed: ParsedScanPayload;
     try {
       const clean = rawText
         .replace(/```json\n?/g, "")
@@ -215,14 +422,26 @@ export async function POST(req: NextRequest) {
       remaining = DAILY_SCAN_LIMIT - (usage?.count ?? 0);
     }
 
+    const resolvedCurrency =
+      typeof parsed.currency === "string" && ["USD", "ARS", "ILS", "EUR"].includes(parsed.currency)
+        ? parsed.currency
+        : "USD";
+
+    const resolvedDetails = buildItemizedDetails(parsed, resolvedCurrency);
+
     return NextResponse.json({
-      amount: parsed.amount,
-      currency: parsed.currency ?? "USD",
-      desc: parsed.desc ?? "",
-      tag: parsed.tag ?? "otro",
-      date: parsed.date ?? new Date().toISOString().split("T")[0],
-      details: parsed.details ?? "",
-      confidence: parsed.confidence ?? 70,
+      amount: toFiniteNumber(parsed.amount) ?? 0,
+      currency: resolvedCurrency,
+      desc: toSafeText(parsed.desc),
+      tag: toSafeText(parsed.tag) || "otro",
+      date: toSafeText(parsed.date) || new Date().toISOString().split("T")[0],
+      details: resolvedDetails,
+      confidence: toFiniteNumber(parsed.confidence) ?? 70,
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      subtotal: toFiniteNumber(parsed.subtotal),
+      discountTotal: toFiniteNumber(parsed.discountTotal) ?? 0,
+      tax: toFiniteNumber(parsed.tax),
+      virtualTicket: buildVirtualTicket(parsed, resolvedCurrency),
       remaining, // null for admins (unlimited), number for regular users
     });
   } catch (err: any) {
