@@ -32,6 +32,8 @@ type ParsedScanPayload = {
   date?: unknown;
   details?: unknown;
   purchaseSummaryRaw?: unknown;
+  purchaseSectionLines?: unknown;
+  ocrLines?: unknown;
   confidence?: unknown;
   subtotal?: unknown;
   discountTotal?: unknown;
@@ -51,6 +53,88 @@ function toFiniteNumber(value: unknown): number | null {
 
 function toSafeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function toSafeLines(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((line) => toSafeText(line))
+    .filter(Boolean);
+}
+
+function uniqueInOrder(lines: string[]): string[] {
+  const unique: string[] = [];
+  for (const line of lines) {
+    if (!unique.includes(line)) unique.push(line);
+  }
+  return unique;
+}
+
+function isPurchaseHeaderLine(line: string): boolean {
+  const text = line.toLowerCase();
+  const tokens = ["פריט", "שם פריט", "קוד", "קוד פריט", "ברקוד", "סכום", "מחיר", "תיאור", "תאור"];
+  let hits = 0;
+  for (const token of tokens) {
+    if (text.includes(token)) hits += 1;
+  }
+  return hits >= 2;
+}
+
+function isSummaryFooterLine(line: string): boolean {
+  const text = line.toLowerCase();
+  const tokens = [
+    "לתשלום",
+    "סהכ",
+    "סכום",
+    "מעמ",
+    "אשראי",
+    "מזומן",
+    "עודף",
+    "שולם",
+    "חיוב",
+    "ישראכרט",
+    "visa",
+    "mastercard",
+  ];
+
+  return tokens.some((token) => text.includes(token));
+}
+
+function looksLikeItemLine(line: string): boolean {
+  const hasAmount = /[-+]?\d+[.,]\d{1,2}/.test(line);
+  const hasText = /[\u0590-\u05FFA-Za-z]/.test(line);
+  return hasAmount && hasText;
+}
+
+function extractPurchaseSectionFromOcrLines(rawLines: string[]): string[] {
+  const lines = uniqueInOrder(rawLines).filter((line) => line.length > 0);
+  if (lines.length === 0) return [];
+
+  let start = lines.findIndex((line) => isPurchaseHeaderLine(line));
+  if (start >= 0) {
+    start += 1;
+  } else {
+    start = lines.findIndex((line) => looksLikeItemLine(line));
+  }
+
+  if (start < 0) return [];
+
+  let end = lines.length;
+  for (let i = start; i < lines.length; i += 1) {
+    if (isSummaryFooterLine(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+
+  const section = lines.slice(start, end).filter((line) => line.length > 0);
+  if (section.length === 0) return [];
+
+  const hasItemLikeLine = section.some((line) => looksLikeItemLine(line));
+  if (!hasItemLikeLine) return [];
+
+  return section;
 }
 
 function formatAmount(value: number, currency: string): string {
@@ -175,6 +259,19 @@ function buildItemizedDetails(rawPayload: ParsedScanPayload, currency: string): 
     return rawSummary;
   }
 
+  const purchaseSectionLines = toSafeLines(rawPayload.purchaseSectionLines);
+  if (purchaseSectionLines.length > 0) {
+    return uniqueInOrder(purchaseSectionLines).join("\n");
+  }
+
+  const ocrLines = toSafeLines(rawPayload.ocrLines);
+  if (ocrLines.length > 0) {
+    const extractedSection = extractPurchaseSectionFromOcrLines(ocrLines);
+    if (extractedSection.length > 0) {
+      return extractedSection.join("\n");
+    }
+  }
+
   const rawItems = Array.isArray(rawPayload.items)
     ? (rawPayload.items as ParsedLineItem[])
     : [];
@@ -184,11 +281,7 @@ function buildItemizedDetails(rawPayload: ParsedScanPayload, currency: string): 
     .filter(Boolean);
 
   if (sourceLines.length > 0) {
-    const uniqueInOrder: string[] = [];
-    for (const line of sourceLines) {
-      if (!uniqueInOrder.includes(line)) uniqueInOrder.push(line);
-    }
-    return uniqueInOrder.join("\n");
+    return uniqueInOrder(sourceLines).join("\n");
   }
 
   return toSafeText(rawPayload.details);
@@ -224,6 +317,8 @@ RESPONDE ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones, sin b
   "tag": string,
   "date": string,
   "purchaseSummaryRaw": string,
+  "purchaseSectionLines": [string],
+  "ocrLines": [string],
   "details": string,
   "confidence": number,
   "subtotal": number,
@@ -248,6 +343,8 @@ Reglas:
 - "tag": Categoría sugerida, DEBE ser una de: alimentacion, transporte, salud, entretenimiento, viajes, suscripcion, servicios, educacion, ropa, hogar, tecnologia, otro
 - "date": Fecha en formato YYYY-MM-DD. Si no hay fecha visible, usa "${new Date().toISOString().split("T")[0]}"
 - "purchaseSummaryRaw": transcripción LITERAL del bloque de compra (ítems/descuentos) tal cual aparece en el ticket, mismo idioma, mismo orden de líneas, sin traducir, sin resumir y sin corregir OCR.
+- "purchaseSectionLines": mismo contenido que purchaseSummaryRaw, pero como array (1 elemento por línea visual del ticket).
+- "ocrLines": OCR completo de todo el ticket en orden visual estricto (1 elemento por línea visual).
 - "details": copia exacta de "purchaseSummaryRaw".
 - "confidence": 0 a 100, qué tan seguro estás de la lectura
 - "subtotal": subtotal antes de descuentos e impuestos cuando exista
@@ -261,6 +358,8 @@ Reglas:
 - Si no ves cantidad explícita, usa qty=1.
 - Para cada item agrega "sourceLine" con el texto OCR exacto de la línea original de ese item.
 - No normalices texto, no cambies signos, no transliteres, no traduzcas hebreo/español/inglés.
+- Prioriza fidelidad textual por encima de interpretación semántica.
+- Si dudas entre dos lecturas, conserva la lectura más literal que aparece en la imagen.
 - Si el ticket muestra múltiples subtotales, toma el TOTAL GENERAL
 - Si hay propinas opcionales, NO las incluyas salvo que el monto final ya las incluya
 - Si el documento no parece un comprobante de pago, devuelve { "error": "No es un comprobante" }`;
@@ -353,7 +452,7 @@ export async function POST(req: NextRequest) {
         },
       ],
       temperature: 0.1,
-      max_tokens: 512,
+      max_tokens: 1200,
       response_format: { type: "json_object" },
     };
 
@@ -452,6 +551,8 @@ export async function POST(req: NextRequest) {
       date: toSafeText(parsed.date) || new Date().toISOString().split("T")[0],
       details: resolvedDetails,
       purchaseSummaryRaw: toSafeText(parsed.purchaseSummaryRaw) || resolvedDetails,
+      purchaseSectionLines: toSafeLines(parsed.purchaseSectionLines),
+      ocrLines: toSafeLines(parsed.ocrLines),
       confidence: toFiniteNumber(parsed.confidence) ?? 70,
       items: Array.isArray(parsed.items) ? parsed.items : [],
       subtotal: toFiniteNumber(parsed.subtotal),
