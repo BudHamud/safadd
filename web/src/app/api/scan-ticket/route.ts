@@ -97,6 +97,51 @@ function isSummaryFooterLine(line: string): boolean {
     "סהכ",
     "סכום",
     "מעמ",
+    "מע\"מ",
+    "tax",
+    "vat",
+    "subtotal",
+    "total",
+    "discount",
+    "descuento",
+    "אשראי",
+    "מזומן",
+    "עודף",
+    "שולם",
+    "חיוב",
+    "חיוב מע\"מ",
+    "חיוב מעמ",
+    "ישראכרט",
+    "visa",
+    "mastercard",
+  ];
+
+  return tokens.some((token) => text.includes(token));
+}
+
+function looksLikeItemLine(line: string): boolean {
+  if (isSummaryFooterLine(line) || isPurchaseHeaderLine(line)) return false;
+  const hasAmount = /[-+]?\d+[.,]\d{1,2}/.test(line);
+  const hasText = /[\u0590-\u05FFA-Za-z]/.test(line);
+  return hasAmount && hasText;
+}
+
+function hasProductLikeTitle(title: string): boolean {
+  if (!title) return false;
+
+  const text = title.toLowerCase();
+  const blocked = [
+    "לתשלום",
+    "סהכ",
+    "סכום",
+    "מעמ",
+    "מע\"מ",
+    "tax",
+    "vat",
+    "subtotal",
+    "total",
+    "discount",
+    "descuento",
     "אשראי",
     "מזומן",
     "עודף",
@@ -107,13 +152,7 @@ function isSummaryFooterLine(line: string): boolean {
     "mastercard",
   ];
 
-  return tokens.some((token) => text.includes(token));
-}
-
-function looksLikeItemLine(line: string): boolean {
-  const hasAmount = /[-+]?\d+[.,]\d{1,2}/.test(line);
-  const hasText = /[\u0590-\u05FFA-Za-z]/.test(line);
-  return hasAmount && hasText;
+  return !blocked.some((token) => text.includes(token));
 }
 
 function extractPurchaseSectionFromOcrLines(rawLines: string[]): string[] {
@@ -218,7 +257,7 @@ function buildSimpleItemFromLine(line: string): SimpleTicketItem | null {
   if (!Number.isFinite(lineTotal)) return null;
 
   const title = cleanTitle(line);
-  if (!title) return null;
+  if (!title || !hasProductLikeTitle(title)) return null;
 
   return {
     title,
@@ -263,7 +302,7 @@ function buildSimpleItemsFromPayloadItems(rawPayload: ParsedScanPayload): Simple
       if (candidateLineTotal === null) return null;
 
       const name = cleanTitle(toSafeText(item.name)) || cleanTitle(sourceLine);
-      if (!name) return null;
+      if (!name || !hasProductLikeTitle(name) || isSummaryFooterLine(sourceLine)) return null;
 
       return {
         title: name,
@@ -283,9 +322,7 @@ function buildSimpleItemsFromLines(rawPayload: ParsedScanPayload): SimpleTicketI
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const fallbackOcrLines = toSafeLines(rawPayload.ocrLines).filter((line) => looksLikeItemLine(line) && !isSimpleSummaryLine(line));
-
-  return uniqueInOrder([...fromPurchaseSection, ...fromOcrLines, ...fromRawSummary, ...fallbackOcrLines])
+  return uniqueInOrder([...fromPurchaseSection, ...fromOcrLines, ...fromRawSummary])
     .map((line) => buildSimpleItemFromLine(line))
     .filter((entry): entry is SimpleTicketItem => Boolean(entry));
 }
