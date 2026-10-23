@@ -1,7 +1,7 @@
 import React from 'react';
 import { Transaction } from '../../../types';
 import { getCurrencySymbol } from '@safed/shared/currency';
-import { MONTHS, MonthBlock, ImportedRow } from './movements.utils';
+import { MONTHS, MonthBlock, ImportedRow, parseDate } from './movements.utils';
 import { useMovementsLogic } from './useMovementsLogic';
 import { useLanguage } from '../../../context/LanguageContext';
 import { useIsMobile } from '../../../hooks/useIsMobile';
@@ -55,11 +55,11 @@ export const MovementsTab = ({
     transactions, onTransactionClick, userId, onTransactionsUpdated,
     globalCurrency, monthlyGoal, availableCategories,
 }: MovementsTabProps) => {
-    const { t } = useLanguage();
+    const { t, lang } = useLanguage();
     const isMobile = useIsMobile(768);
     const sym = getCurrencySymbol(globalCurrency);
     const monthOptions = Array.from({ length: 12 }, (_, index) => {
-        const label = new Intl.DateTimeFormat('es-AR', { month: 'long' }).format(new Date(2026, index, 1));
+        const label = new Intl.DateTimeFormat(lang === 'en' ? 'en-US' : 'es-AR', { month: 'long' }).format(new Date(2026, index, 1));
         return label.charAt(0).toUpperCase() + label.slice(1);
     });
 
@@ -74,6 +74,27 @@ export const MovementsTab = ({
     } = useMovementsLogic(transactions, userId, globalCurrency, monthlyGoal, onTransactionsUpdated);
 
     const { search, filterMonth, filterYear, filterType, showFilters, filterCategory, currentPage } = filters;
+    const cardSpending = React.useMemo(() => {
+        const totals = new Map<string, { total: number; count: number }>();
+        transactions.forEach(transaction => {
+            if (transaction.paymentMethod !== 'tarjeta' || transaction.type !== 'expense' || transaction.isCancelled || !transaction.cardDigits) return;
+            const date = parseDate(transaction.date);
+            if (date.getTime() === 0) return;
+            if (filterMonth !== 'all' && date.getMonth() !== filterMonth) return;
+            if (filterYear !== 'all' && date.getFullYear() !== filterYear) return;
+            const current = totals.get(transaction.cardDigits) ?? { total: 0, count: 0 };
+            current.total += transaction.amount;
+            current.count += 1;
+            totals.set(transaction.cardDigits, current);
+        });
+        return Array.from(totals, ([digits, values]) => ({ digits, ...values })).sort((a, b) => b.total - a.total);
+    }, [transactions, filterMonth, filterYear]);
+    const cardPeriodLabel = (() => {
+        if (filterMonth === 'all' && filterYear === 'all') return t('movements.historical');
+        if (filterMonth !== 'all' && filterYear !== 'all') return `${monthOptions[filterMonth]} ${filterYear}`;
+        if (filterMonth !== 'all') return `${monthOptions[filterMonth]} · ${t('movements.all_years')}`;
+        return String(filterYear);
+    })();
     const typeLabels: Record<'all' | 'expense' | 'income', string> = {
         all: t('movements.filter_all'),
         expense: `↓ ${t('movements.expenses')}`,
@@ -201,10 +222,10 @@ export const MovementsTab = ({
                     {txList}
                 </div>
 
-                {!isMobile && <MovementsSidebar sidebar={sidebar} sym={sym} />}
+                {!isMobile && <MovementsSidebar sidebar={sidebar} sym={sym} cardSpending={cardSpending} cardPeriodLabel={cardPeriodLabel} />}
             </div>
 
-            {isMobile && <MovementsSidebar sidebar={sidebar} sym={sym} fullWidth />}
+            {isMobile && <MovementsSidebar sidebar={sidebar} sym={sym} cardSpending={cardSpending} cardPeriodLabel={cardPeriodLabel} fullWidth />}
 
             {/* Column mapping modal — step 1 */}
             {importDraft && (

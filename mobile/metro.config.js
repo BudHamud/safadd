@@ -1,3 +1,5 @@
+"use client"
+
 const fs = require('fs');
 const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');

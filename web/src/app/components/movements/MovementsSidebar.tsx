@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { formatCurrency } from '../../../lib/utils';
 import { useLanguage } from '../../../context/LanguageContext';
 import { SidebarData } from './useMovementsLogic';
@@ -144,11 +144,14 @@ const SidebarTopCats = ({ topCats, maxCat, sym }: { topCats: [string, number][];
 type Props = {
     sidebar: SidebarData;
     sym: string;
+    cardSpending: Array<{ digits: string; total: number; count: number }>;
+    cardPeriodLabel: string;
     fullWidth?: boolean;
 };
 
-export const MovementsSidebar = ({ sidebar, sym, fullWidth }: Props) => {
-    const { t } = useLanguage();
+export const MovementsSidebar = ({ sidebar, sym, cardSpending, cardPeriodLabel, fullWidth }: Props) => {
+    const { t, lang } = useLanguage();
+    const [activeTab, setActiveTab] = useState<'balance' | 'cards'>('balance');
     return (
         <div style={{ width: fullWidth ? '100%' : '220px', flexShrink: 0 }}>
             <div style={{ background: TOKEN.dark, border: `1px solid ${TOKEN.border}`, borderRadius: '10px', padding: '1.1rem' }}>
@@ -158,6 +161,16 @@ export const MovementsSidebar = ({ sidebar, sym, fullWidth }: Props) => {
                     {sidebar.label}
                 </div>
 
+                <div role="tablist" aria-label={t('common.balance')} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem', padding: '0.2rem', marginBottom: '0.9rem', background: TOKEN.surface, borderRadius: 7 }}>
+                    {(['balance', 'cards'] as const).map(tab => {
+                        const selected = activeTab === tab;
+                        return <button key={tab} type="button" role="tab" aria-selected={selected} onClick={() => setActiveTab(tab)} style={{ border: `1px solid ${selected ? TOKEN.green : 'transparent'}`, borderRadius: 5, padding: '0.45rem 0.25rem', background: selected ? TOKEN.green : 'transparent', color: selected ? 'var(--primary-text)' : TOKEN.muted, fontFamily: 'inherit', fontSize: '0.65rem', fontWeight: 800, cursor: 'pointer' }}>
+                            {tab === 'balance' ? t('common.balance') : (lang === 'en' ? 'Cards' : 'Tarjetas')}
+                        </button>;
+                    })}
+                </div>
+
+                {activeTab === 'balance' ? <>
                 <SidebarBalance balance={sidebar.balance} income={sidebar.income} expense={sidebar.expense} sym={sym} />
 
                 {/* Middle widget */}
@@ -176,6 +189,21 @@ export const MovementsSidebar = ({ sidebar, sym, fullWidth }: Props) => {
                     <div style={{ fontSize: '0.6rem', color: TOKEN.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.7rem' }}>{t('movements.sidebar_top_cats')}</div>
                     <SidebarTopCats topCats={sidebar.topCats} maxCat={sidebar.maxCat} sym={sym} />
                 </div>
+                </> : <section role="tabpanel" aria-label={lang === 'en' ? 'Cards' : 'Tarjetas'}>
+                    <div style={{ fontSize: '0.57rem', fontWeight: 800, color: TOKEN.green, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>{cardPeriodLabel}</div>
+                    {cardSpending.length === 0 ? <div style={{ fontSize: '0.7rem', color: TOKEN.muted }}>{t('common.no_data')}</div> : <>
+                        <div style={{ fontSize: '1.25rem', fontWeight: 900, color: TOKEN.text, marginBottom: '0.65rem' }}>{formatCurrency(cardSpending.reduce((sum, card) => sum + card.total, 0), sym)}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                            {cardSpending.map(card => <div key={card.digits} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', padding: '0.5rem 0', borderTop: '1px solid var(--border-dim)' }}>
+                                <div>
+                                    <div style={{ fontSize: '0.7rem', fontWeight: 800, color: TOKEN.text }}>💳 •••• {card.digits}</div>
+                                    <div style={{ fontSize: '0.55rem', color: TOKEN.muted, marginTop: '0.15rem' }}>{card.count} {lang === 'en' ? (card.count === 1 ? 'transaction' : 'transactions') : (card.count === 1 ? 'movimiento' : 'movimientos')}</div>
+                                </div>
+                                <div style={{ fontSize: '0.7rem', fontWeight: 800, color: TOKEN.text, textAlign: 'right' }}>{formatCurrency(card.total, sym)}</div>
+                            </div>)}
+                        </div>
+                    </>}
+                </section>}
             </div>
         </div>
     );

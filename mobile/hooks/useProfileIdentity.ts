@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import * as WebBrowser from 'expo-web-browser';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
+import { getRevenueCatPackages, hasRevenueCatProAccess, isRevenueCatReady, purchaseRevenueCatPackage, restoreRevenueCatPurchases, type RevenueCatPackages, type RevenueCatVariant } from '../lib/revenueCat';
 import { getRequestErrorMessage } from '../lib/requestErrors';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -28,13 +28,42 @@ export function useProfileIdentity() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [activeSheet, setActiveSheet] = useState<IdentitySheet>(null);
-
-  const yearlyCheckoutUrl = (process.env.EXPO_PUBLIC_PRO_YEARLY_URL || '').trim();
-  const lifetimeCheckoutUrl = (process.env.EXPO_PUBLIC_PRO_LIFETIME_URL || '').trim();
+  const [planPackages, setPlanPackages] = useState<RevenueCatPackages>({ yearly: null, lifetime: null });
+  const [offeringsLoading, setOfferingsLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [checkoutLoadingVariant, setCheckoutLoadingVariant] = useState<RevenueCatVariant | null>(null);
 
   useEffect(() => {
     setUsername(webUser?.username || '');
   }, [webUser?.username]);
+
+  const loadPlanPackages = useCallback(async () => {
+    if (!user?.id || !isRevenueCatReady()) {
+      setPlanPackages({ yearly: null, lifetime: null });
+      return { yearly: null, lifetime: null };
+    }
+
+    setOfferingsLoading(true);
+    try {
+      const nextPackages = await getRevenueCatPackages(user.id);
+      setPlanPackages(nextPackages);
+      return nextPackages;
+    } catch (error) {
+      console.warn('[ProfileIdentity] RevenueCat offerings load failed:', error);
+      setPlanPackages({ yearly: null, lifetime: null });
+      return { yearly: null, lifetime: null };
+    } finally {
+      setOfferingsLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (activeSheet !== 'plan' || isPro) {
+      return;
+    }
+
+    void loadPlanPackages();
+  }, [activeSheet, isPro, loadPlanPackages]);
 
   const handlePlanAction = async () => {
     if (isPro) {
@@ -44,24 +73,90 @@ export function useProfileIdentity() {
     setActiveSheet('plan');
   };
 
-  const handleCheckout = async (variant: 'yearly' | 'lifetime') => {
-    const url = variant === 'yearly' ? yearlyCheckoutUrl : lifetimeCheckoutUrl;
+  const handleCheckout = async (variant: RevenueCatVariant) => {
+    if (!user?.id || !isRevenueCatReady()) {
+      await dialog.alert(t('plan.checkout_missing_body'), t('plan.checkout_missing_title'));
+      return;
+    }
 
-    if (!url) {
+    let selectedPackage = planPackages[variant];
+    if (!selectedPackage) {
+      const freshPackages = await loadPlanPackages();
+      selectedPackage = freshPackages[variant];
+    }
+
+    if (!selectedPackage) {
       await dialog.alert(t('plan.checkout_missing_body'), t('plan.checkout_missing_title'));
       return;
     }
 
     const confirmed = await dialog.confirm({
       title: variant === 'yearly' ? t('plan.offer_yearly_name') : t('plan.offer_lifetime_name'),
-      message: variant === 'yearly' ? t('plan.offer_yearly_price') : t('plan.offer_lifetime_price'),
+      message: selectedPackage.product.priceString || (variant === 'yearly' ? t('plan.offer_yearly_price') : t('plan.offer_lifetime_price')),
       confirmText: t('plan.checkout_confirm_action'),
       cancelText: t('btn.cancel'),
       type: 'confirm',
     });
 
-    if (confirmed) {
-      await WebBrowser.openBrowserAsync(url);
+    if (!confirmed) {
+      return;
+    }
+
+    setCheckoutLoadingVariant(variant);
+    try {
+      const { customerInfo } = await purchaseRevenueCatPackage(selectedPackage);
+      await refreshProfile();
+      setActiveSheet(null);
+      haptic.success();
+      Toast.show({
+        type: 'success',
+        text1: t('plan.pro_active_title'),
+        text2: hasRevenueCatProAccess(customerInfo) ? t('plan.purchase_success_body') : t('plan.purchase_pending_body'),
+      });
+    } catch (error: any) {
+      if (error?.userCancelled) {
+        return;
+      }
+
+      haptic.error();
+      Toast.show({
+        type: 'error',
+        text1: t('details.save_error'),
+        text2: error?.message || t('plan.purchase_error_body'),
+      });
+    } finally {
+      setCheckoutLoadingVariant(null);
+    }
+  };
+
+  const handleRestorePurchases = async () => {
+    if (!user?.id || !isRevenueCatReady()) {
+      await dialog.alert(t('plan.checkout_missing_body'), t('plan.checkout_missing_title'));
+      return;
+    }
+
+    setRestoreLoading(true);
+    try {
+      const customerInfo = await restoreRevenueCatPurchases();
+      await refreshProfile();
+
+      if (hasRevenueCatProAccess(customerInfo)) {
+        haptic.success();
+        await dialog.alert(t('plan.restore_success_body'), t('plan.restore_success_title'));
+        setActiveSheet(null);
+        return;
+      }
+
+      await dialog.alert(t('plan.restore_empty_body'), t('plan.restore_empty_title'));
+    } catch (error: any) {
+      haptic.error();
+      Toast.show({
+        type: 'error',
+        text1: t('details.save_error'),
+        text2: error?.message || t('plan.purchase_error_body'),
+      });
+    } finally {
+      setRestoreLoading(false);
     }
   };
 
@@ -230,12 +325,17 @@ export function useProfileIdentity() {
     emailLoading,
     passwordLoading,
     deleteLoading,
+    offeringsLoading,
+    restoreLoading,
+    checkoutLoadingVariant,
+    planPackages,
     // sheet nav
     activeSheet,
     setActiveSheet,
     // handlers
     handlePlanAction,
     handleCheckout,
+    handleRestorePurchases,
     handleSaveName,
     handleChangeEmail,
     handleChangePassword,

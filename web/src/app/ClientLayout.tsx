@@ -216,6 +216,8 @@ export default function ClientLayout({
             }}
             globalCurrency={context.globalCurrency}
             onCurrencyChange={context.handleCurrencyChange}
+            favoriteCurrencies={context.favoriteCurrencies}
+            onFavoriteCurrenciesChange={context.handleFavoriteCurrenciesChange}
             availableCategories={context.allCategories}
             onCategoryChangeInfo={() => context.setCatSignal((c) => c + 1)}
           />

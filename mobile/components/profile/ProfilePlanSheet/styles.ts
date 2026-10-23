@@ -50,7 +50,15 @@ export const s = StyleSheet.create({
     alignItems: 'center',
     marginTop: Spacing.xs,
   },
+  offerBtnDisabled: { opacity: 0.6 },
   offerBtnText: { fontSize: FontSize.sm, fontWeight: FontWeight.black, letterSpacing: 0.8 },
+  restoreBtn: {
+    borderWidth: 1,
+    borderRadius: Radius.block,
+    paddingVertical: Spacing.md - 2,
+    alignItems: 'center',
+  },
+  restoreBtnText: { fontSize: FontSize.xs, fontWeight: FontWeight.black, letterSpacing: 0.8 },
   legal: { fontSize: 10, lineHeight: 16, textAlign: 'center', paddingHorizontal: Spacing.sm },
 });
 

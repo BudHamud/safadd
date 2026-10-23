@@ -2,6 +2,8 @@ import React from 'react';
 import { Transaction } from '../../../types';
 import { formatCurrency } from '../../../lib/utils';
 import { useLanguage } from '../../../context/LanguageContext';
+import { getTransactionAmount } from '@safed/shared/currency';
+import type { SupportedCurrency } from '@safed/shared/types';
 
 type FixedItem = {
     latest: Transaction;
@@ -14,7 +16,7 @@ type Props = {
     fixedTxsData: FixedItem[];
     curMonthName: string;
     sym: string;
-    globalCurrency: string;
+    globalCurrency: SupportedCurrency;
     onTransactionClick: (tx: Transaction) => void;
     setIsAddModalOpen?: (open: boolean) => void;
     setAddModalInitialData?: (data: Partial<Transaction> | null) => void;
@@ -26,12 +28,7 @@ export const PaymentSheetCard = ({
 }: Props) => {
     const { t } = useLanguage();
 
-    const getTxAmountForCurrency = (tx: Transaction) => {
-        if (globalCurrency === 'USD') return tx.amountUSD ?? tx.amount;
-        if (globalCurrency === 'ARS') return tx.amountARS ?? tx.amount;
-        if (globalCurrency === 'EUR') return tx.amountEUR ?? tx.amount;
-        return tx.amountILS ?? tx.amount;
-    };
+    const getTxAmountForCurrency = (tx: Transaction) => getTransactionAmount(tx, globalCurrency);
 
     const getRecurringLabel = (periodicity?: number) => {
         if (!periodicity) return '';

@@ -1,7 +1,7 @@
 {
   "name": "safadd-mobile",
   "main": "index.js",
-  "version": "1.1.2",
+  "version": "1.1.21",
   "scripts": {
     "start": "expo start -c",
     "reset-project": "node ./scripts/reset-project.js",
@@ -37,6 +37,7 @@
     "ansi-styles": "^5.2.0",
     "expo": "~54.0.33",
     "expo-asset": "~12.0.12",
+    "expo-build-properties": "^55.0.11",
     "expo-constants": "~18.0.13",
     "expo-device": "~8.0.10",
     "expo-font": "~14.0.11",

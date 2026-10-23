@@ -18,6 +18,8 @@ import { ProfileGoalView } from './ProfileGoalView';
 import { ProfileNotificationsView } from './ProfileNotificationsView';
 import { ProfileSyncView } from './ProfileSyncView';
 import { ProfileAdminDebugView } from './ProfileAdminDebugView';
+import { SUPPORTED_CURRENCIES, getCurrencyMetadata } from '@safed/shared/currency';
+import type { SupportedCurrency } from '@safed/shared/types';
 
 type ProfileTabProps = {
     userName: string;
@@ -29,27 +31,27 @@ type ProfileTabProps = {
     userId: string;
     monthlyGoal: number;
     onUpdate: () => void;
-    globalCurrency: 'ILS' | 'USD' | 'ARS' | 'EUR';
-    onCurrencyChange: (curr: 'ILS' | 'USD' | 'ARS' | 'EUR') => void;
+    globalCurrency: SupportedCurrency;
+    onCurrencyChange: (curr: SupportedCurrency) => void;
+    favoriteCurrencies: SupportedCurrency[];
+    onFavoriteCurrenciesChange: (currencies: SupportedCurrency[]) => Promise<boolean>;
     availableCategories: Category[];
     onCategoryChangeInfo: () => void;
 };
 
 export const ProfileTab = ({
     userName, userEmail, theme, toggleTheme, onLogout, transactions, userId,
-    monthlyGoal, onUpdate, globalCurrency, onCurrencyChange,
+    monthlyGoal, onUpdate, globalCurrency, onCurrencyChange, favoriteCurrencies, onFavoriteCurrenciesChange,
     availableCategories, onCategoryChangeInfo
 }: ProfileTabProps) => {
     const { lang, setLang, t } = useLanguage();
     const dialog = useDialog();
     const appContext = useAppContext();
     const { authenticatedFetch, updateTransactionsCategory } = appContext;
-    const currencyOptions = [
-        { value: 'ILS', label: t('profile.currency_ils') },
-        { value: 'USD', label: t('profile.currency_usd') },
-        { value: 'EUR', label: t('profile.currency_eur') },
-        { value: 'ARS', label: t('profile.currency_ars') },
-    ] as const;
+    const currencyOptions = SUPPORTED_CURRENCIES.map((value) => {
+        const meta = getCurrencyMetadata(value, lang);
+        return { value, label: `${meta.code} — ${meta.name} (${meta.symbol})` };
+    });
 
     const [viewMode, setViewMode] = useState<'menu' | 'categories' | 'notifications' | 'goal' | 'identity' | 'sync' | 'colors' | 'adminReports'>('menu');
     const [isExplainerOpen, setIsExplainerOpen] = useState(false);
@@ -516,6 +518,8 @@ export const ProfileTab = ({
                         daysLeft={daysLeft}
                         globalCurrency={globalCurrency}
                         currencyOptions={currencyOptions}
+                        favoriteCurrencies={favoriteCurrencies}
+                        onFavoriteCurrenciesChange={onFavoriteCurrenciesChange}
                         lang={lang}
                         bankSyncEnabled={bankSyncEnabled}
                         uniqueCategories={uniqueCategories}

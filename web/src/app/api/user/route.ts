@@ -3,10 +3,10 @@ import { ensureAppUserProfile, requireAuth, signOutAuthenticatedSupabaseUser } f
 import { prisma } from '../../../lib/prisma';
 import { enforceSameOrigin, normalizeText } from '../../../lib/security';
 import { buildPlanPayload, clampAvailableCurrenciesForPlan, getDeviceAccess, getMaxAvailableCurrencies, normalizeDeviceIds, normalizePlanTier } from '../../../lib/plan';
+import { SUPPORTED_CURRENCIES } from '@safed/shared/currency';
 
-const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'ARS', 'ILS'] as const;
 type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
-const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CURRENCIES);
+const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CURRENCIES as readonly string[]);
 
 function isSupportedCurrency(value: unknown): value is SupportedCurrency {
     return typeof value === 'string' && SUPPORTED_CURRENCY_SET.has(value);

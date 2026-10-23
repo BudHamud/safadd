@@ -1,7 +1,12 @@
-import { Redirect } from 'expo-router';
+import { Redirect } from "expo-router";
+import { useAuth } from "../context/AuthContext";
 
 export default function Index() {
-  // Cuando ingresamos a la ruta raíz `/`, redirigimos automáticamente a los Tabs.
-  // El control de si el usuario está logueado o no lo maneja RootLayoutNav en `_layout.tsx`.
-  return <Redirect href="/(tabs)" />;
+  const { session, loading } = useAuth();
+
+  if (loading) {
+    return null;
+  }
+
+  return <Redirect href={session ? "/(tabs)" : "/login"} />;
 }

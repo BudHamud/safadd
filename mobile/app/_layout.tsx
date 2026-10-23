@@ -1,4 +1,4 @@
-import { Slot, useRouter, useSegments } from 'expo-router';
+import { Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
@@ -44,14 +44,11 @@ function RootLayoutNav() {
   const { theme: C, isDark } = useTheme();
   const { t, lang } = useLanguage();
   const dialog = useDialog();
-  const segments = useSegments();
-  const router = useRouter();
   const [minSplashElapsed, setMinSplashElapsed] = useState(false);
   const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
   const [lastPromptedUpdateId, setLastPromptedUpdateId] = useState<string | null>(null);
   const hasCheckedForUpdateOnLaunch = useRef(false);
-  const inAuthGroup = segments[0] === 'login';
-  const awaitingInitialData = Boolean(session && webUser && !inAuthGroup && transactionsLoading && transactions.length === 0);
+  const awaitingInitialData = Boolean(session && webUser && transactionsLoading && transactions.length === 0);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -68,18 +65,6 @@ function RootLayoutNav() {
 
     return () => clearTimeout(timer);
   }, []);
-
-  useEffect(() => {
-    if (loading) return;
-
-    if (!session && !inAuthGroup) {
-      // No session → go to login
-      router.replace('/login');
-    } else if (session && inAuthGroup) {
-      // Has session → go to tabs
-      router.replace('/(tabs)');
-    }
-  }, [session, loading, segments, router]);
 
   const checkForAvailableUpdate = useCallback(async () => {
     if (loading || configError || !minSplashElapsed || isCheckingForUpdate || !Updates.isEnabled) {
@@ -143,28 +128,21 @@ function RootLayoutNav() {
     return () => clearTimeout(timer);
   }, [loading, configError, minSplashElapsed, checkForAvailableUpdate]);
 
-  if (configError) {
-    return (
-      <View style={[styles.splash, { backgroundColor: C.bg }]}> 
-        <AppSplash title="Safadd" subtitle={configError} />
-      </View>
-    );
-  }
-
-  // Show a full-screen spinner while the auth state is being resolved
-  if (loading || awaitingInitialData || !minSplashElapsed) {
-    return (
-      <View style={[styles.splash, { backgroundColor: C.bg }]}>
-        <AppSplash title="Safadd" subtitle={t('common.loading_data_hint')} />
-      </View>
-    );
-  }
-
   return (
     <>
       <Slot />
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <Toast config={getToastConfig(C)} />
+      {configError ? (
+        <View style={[styles.splashOverlay, { backgroundColor: C.bg }]}> 
+          <AppSplash title="Safadd" subtitle={configError} />
+        </View>
+      ) : null}
+      {!configError && (loading || awaitingInitialData || !minSplashElapsed) ? (
+        <View style={[styles.splashOverlay, { backgroundColor: C.bg }]}> 
+          <AppSplash title="Safadd" subtitle={t('common.loading_data_hint')} />
+        </View>
+      ) : null}
     </>
   );
 }
@@ -190,8 +168,10 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
-  splash: {
+  splashOverlay: {
+    ...StyleSheet.absoluteFillObject,
     flex: 1,
     justifyContent: 'center',
+    zIndex: 10,
   },
 });

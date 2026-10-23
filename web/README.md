@@ -45,6 +45,10 @@ SUPABASE_ANON_KEY="your-supabase-anon-key"
 # Optional
 DIRECT_URL="postgresql://user:password@host:port/dbname"
 GROQ_API_KEY="your-groq-api-key"
+REVENUECAT_WEBHOOK_AUTH="your-revenuecat-webhook-secret"
+REVENUECAT_PRO_ENTITLEMENT="pro"
+REVENUECAT_PRO_YEARLY_PRODUCT="safadd-pro-yearly"
+REVENUECAT_PRO_LIFETIME_PRODUCT="safadd-pro-lifetime"
 ```
 
 ### Required
@@ -57,6 +61,15 @@ GROQ_API_KEY="your-groq-api-key"
 
 - `DIRECT_URL`: useful for some Prisma workflows and deployments
 - `GROQ_API_KEY`: enables receipt scanning
+- `REVENUECAT_WEBHOOK_AUTH`: required if you want RevenueCat webhooks to update `User.planTier`
+- `REVENUECAT_PRO_ENTITLEMENT`: optional explicit entitlement id for Pro events
+- `REVENUECAT_PRO_YEARLY_PRODUCT` and `REVENUECAT_PRO_LIFETIME_PRODUCT`: optional explicit product ids used by the RevenueCat webhook matcher
+
+RevenueCat webhook:
+
+- Point RevenueCat to `POST /api/revenuecat/webhook`.
+- Configure the same authorization secret in RevenueCat and `REVENUECAT_WEBHOOK_AUTH`.
+- The route updates `User.planTier` using `app_user_id` as `authId`, and frees any `transferred_from` users on transfer events.
 
 ## Local development
 

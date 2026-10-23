@@ -32,7 +32,13 @@ export function ProfileIdentityView({ onClose }: Props) {
       return (
         <ProfilePlanSheet
           isPro={isPro}
+          yearlyPrice={id.planPackages.yearly?.product.priceString || t('plan.compare_cost_pro_yearly')}
+          lifetimePrice={id.planPackages.lifetime?.product.priceString || t('plan.compare_cost_pro_lifetime')}
+          offeringsLoading={id.offeringsLoading}
+          restoreLoading={id.restoreLoading}
+          checkoutLoadingVariant={id.checkoutLoadingVariant}
           onCheckout={(v) => { void id.handleCheckout(v); }}
+          onRestore={() => { void id.handleRestorePurchases(); }}
         />
       );
     }

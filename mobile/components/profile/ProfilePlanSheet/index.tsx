@@ -2,17 +2,32 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { CheckCircle2 } from 'lucide-react-native';
 import { useLanguage } from '../../../context/LanguageContext';
 import { useTheme } from '../../../context/ThemeContext';
-import { Spacing, Radius, FontSize, FontWeight } from '../../../constants/theme';
 import { s } from './styles';
 
 type Props = {
   isPro: boolean;
+  yearlyPrice: string;
+  lifetimePrice: string;
+  offeringsLoading: boolean;
+  restoreLoading: boolean;
+  checkoutLoadingVariant: 'yearly' | 'lifetime' | null;
   onCheckout: (variant: 'yearly' | 'lifetime') => void;
+  onRestore: () => void;
 };
 
-export function ProfilePlanSheet({ isPro, onCheckout }: Props) {
+export function ProfilePlanSheet({
+  isPro,
+  yearlyPrice,
+  lifetimePrice,
+  offeringsLoading,
+  restoreLoading,
+  checkoutLoadingVariant,
+  onCheckout,
+  onRestore,
+}: Props) {
   const { t } = useLanguage();
   const { theme: C } = useTheme();
+  const isBusy = offeringsLoading || restoreLoading || checkoutLoadingVariant !== null;
 
   const compareRows: { feature: string; free: string; pro: string }[] = [
     { feature: t('plan.compare_secondary_currencies'), free: t('plan.compare_currencies_free'), pro: t('plan.compare_currencies_pro') },
@@ -87,12 +102,18 @@ export function ProfilePlanSheet({ isPro, onCheckout }: Props) {
                 <Text style={[s.offerCaption, { color: C.textMuted }]}>{t('plan.offer_yearly_caption')}</Text>
               </View>
               <View style={s.offerPrice}>
-                <Text style={[s.offerAmount, { color: C.textMain }]}>{t('plan.compare_cost_pro_yearly')}</Text>
+                <Text style={[s.offerAmount, { color: C.textMain }]}>{yearlyPrice}</Text>
                 <Text style={[s.offerPeriod, { color: C.textMuted }]}>{t('plan.offer_yearly_period')}</Text>
               </View>
             </View>
-            <TouchableOpacity style={[s.offerBtn, { backgroundColor: C.primary }]} onPress={() => onCheckout('yearly')}>
-              <Text style={[s.offerBtnText, { color: C.primaryText }]}>{t('plan.buy_yearly').toUpperCase()}</Text>
+            <TouchableOpacity
+              style={[s.offerBtn, { backgroundColor: C.primary }, isBusy && s.offerBtnDisabled]}
+              onPress={() => onCheckout('yearly')}
+              disabled={isBusy}
+            >
+              <Text style={[s.offerBtnText, { color: C.primaryText }]}>
+                {(checkoutLoadingVariant === 'yearly' || offeringsLoading ? t('auth.processing') : t('plan.buy_yearly')).toUpperCase()}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -104,17 +125,30 @@ export function ProfilePlanSheet({ isPro, onCheckout }: Props) {
                 <Text style={[s.offerCaption, { color: C.textMuted }]}>{t('plan.offer_lifetime_caption')}</Text>
               </View>
               <View style={s.offerPrice}>
-                <Text style={[s.offerAmount, { color: C.textMain }]}>{t('plan.compare_cost_pro_lifetime')}</Text>
+                <Text style={[s.offerAmount, { color: C.textMain }]}>{lifetimePrice}</Text>
                 <Text style={[s.offerPeriod, { color: C.textMuted }]}>{t('plan.offer_lifetime_period')}</Text>
               </View>
             </View>
             <TouchableOpacity
-              style={[s.offerBtn, { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
+              style={[s.offerBtn, { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }, isBusy && s.offerBtnDisabled]}
               onPress={() => onCheckout('lifetime')}
+              disabled={isBusy}
             >
-              <Text style={[s.offerBtnText, { color: C.textMain }]}>{t('plan.buy_lifetime').toUpperCase()}</Text>
+              <Text style={[s.offerBtnText, { color: C.textMain }]}>
+                {(checkoutLoadingVariant === 'lifetime' || offeringsLoading ? t('auth.processing') : t('plan.buy_lifetime')).toUpperCase()}
+              </Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={[s.restoreBtn, { borderColor: C.border, backgroundColor: C.surface }, isBusy && s.offerBtnDisabled]}
+            onPress={onRestore}
+            disabled={isBusy}
+          >
+            <Text style={[s.restoreBtnText, { color: C.textMain }]}>
+              {(restoreLoading ? t('auth.processing') : t('plan.restore_action')).toUpperCase()}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 

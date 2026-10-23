@@ -19,7 +19,6 @@ type ParsedLineItem = {
   qty?: unknown;
   unitPrice?: unknown;
   totalPrice?: unknown;
-  lineTotal?: unknown;
   discount?: unknown;
   sourceLine?: unknown;
 };
@@ -32,22 +31,11 @@ type ParsedScanPayload = {
   tag?: unknown;
   date?: unknown;
   details?: unknown;
-  purchaseSummaryRaw?: unknown;
-  purchaseSectionLines?: unknown;
-  ocrLines?: unknown;
-  simpleItems?: unknown;
   confidence?: unknown;
   subtotal?: unknown;
   discountTotal?: unknown;
   tax?: unknown;
   items?: unknown;
-};
-
-type SimpleTicketItem = {
-  title: string;
-  qty: number;
-  lineTotal: number;
-  sourceLine: string;
 };
 
 function toFiniteNumber(value: unknown): number | null {
@@ -62,127 +50,6 @@ function toFiniteNumber(value: unknown): number | null {
 
 function toSafeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function toSafeLines(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .map((line) => toSafeText(line))
-    .filter(Boolean);
-}
-
-function uniqueInOrder(lines: string[]): string[] {
-  const unique: string[] = [];
-  for (const line of lines) {
-    if (!unique.includes(line)) unique.push(line);
-  }
-  return unique;
-}
-
-function isPurchaseHeaderLine(line: string): boolean {
-  const text = line.toLowerCase();
-  const tokens = ["פריט", "שם פריט", "קוד", "קוד פריט", "ברקוד", "סכום", "מחיר", "תיאור", "תאור"];
-  let hits = 0;
-  for (const token of tokens) {
-    if (text.includes(token)) hits += 1;
-  }
-  return hits >= 2;
-}
-
-function isSummaryFooterLine(line: string): boolean {
-  const text = line.toLowerCase();
-  const tokens = [
-    "לתשלום",
-    "סהכ",
-    "סכום",
-    "מעמ",
-    "מע\"מ",
-    "tax",
-    "vat",
-    "subtotal",
-    "total",
-    "discount",
-    "descuento",
-    "אשראי",
-    "מזומן",
-    "עודף",
-    "שולם",
-    "חיוב",
-    "חיוב מע\"מ",
-    "חיוב מעמ",
-    "ישראכרט",
-    "visa",
-    "mastercard",
-  ];
-
-  return tokens.some((token) => text.includes(token));
-}
-
-function looksLikeItemLine(line: string): boolean {
-  if (isSummaryFooterLine(line) || isPurchaseHeaderLine(line)) return false;
-  const hasAmount = /[-+]?\d+[.,]\d{1,2}/.test(line);
-  const hasText = /[\u0590-\u05FFA-Za-z]/.test(line);
-  return hasAmount && hasText;
-}
-
-function hasProductLikeTitle(title: string): boolean {
-  if (!title) return false;
-
-  const text = title.toLowerCase();
-  const blocked = [
-    "לתשלום",
-    "סהכ",
-    "סכום",
-    "מעמ",
-    "מע\"מ",
-    "tax",
-    "vat",
-    "subtotal",
-    "total",
-    "discount",
-    "descuento",
-    "אשראי",
-    "מזומן",
-    "עודף",
-    "שולם",
-    "חיוב",
-    "ישראכרט",
-    "visa",
-    "mastercard",
-  ];
-
-  return !blocked.some((token) => text.includes(token));
-}
-
-function extractPurchaseSectionFromOcrLines(rawLines: string[]): string[] {
-  const lines = uniqueInOrder(rawLines).filter((line) => line.length > 0);
-  if (lines.length === 0) return [];
-
-  let start = lines.findIndex((line) => isPurchaseHeaderLine(line));
-  if (start >= 0) {
-    start += 1;
-  } else {
-    start = lines.findIndex((line) => looksLikeItemLine(line));
-  }
-
-  if (start < 0) return [];
-
-  let end = lines.length;
-  for (let i = start; i < lines.length; i += 1) {
-    if (isSummaryFooterLine(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-
-  const section = lines.slice(start, end).filter((line) => line.length > 0);
-  if (section.length === 0) return [];
-
-  const hasItemLikeLine = section.some((line) => looksLikeItemLine(line));
-  if (!hasItemLikeLine) return [];
-
-  return section;
 }
 
 function formatAmount(value: number, currency: string): string {
@@ -213,206 +80,121 @@ function formatCompactAmount(value: number, currency: string): string {
   })}`;
 }
 
-function extractDecimalValues(text: string): number[] {
-  const matches = text.match(/[-+]?\d+[.,]\d{1,2}/g) ?? [];
-  return matches
-    .map((token) => toFiniteNumber(token))
-    .filter((value): value is number => value !== null);
-}
-
-function parseQty(value: unknown, sourceLine: string): number {
-  const fromValue = toFiniteNumber(value);
-  if (fromValue !== null && fromValue > 0) return fromValue;
-
-  const qtyMatch = sourceLine.match(/(?:x|X)\s*(\d+(?:[.,]\d+)?)/) ?? sourceLine.match(/(\d+(?:[.,]\d+)?)\s*(?:x|X)/);
-  if (!qtyMatch) return 1;
-
-  const parsed = toFiniteNumber(qtyMatch[1]);
-  return parsed !== null && parsed > 0 ? parsed : 1;
-}
-
-function cleanTitle(text: string): string {
-  return text
-    .replace(/\b\d{6,}\b/g, " ")
-    .replace(/[-+]?\d+[.,]\d{1,2}/g, " ")
-    .replace(/\b(?:x|X)\s*\d+(?:[.,]\d+)?\b/g, " ")
-    .replace(/[₪$€]/g, " ")
-    .replace(/[|¦:]/g, " ")
+function normalizeItemName(value: string): string {
+  return value
+    .replace(/[|¦]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function isSimpleSummaryLine(line: string): boolean {
-  return isSummaryFooterLine(line) || isPurchaseHeaderLine(line);
+function extractNameFromSourceLine(sourceLine: string): string {
+  if (!sourceLine) return "";
+
+  return sourceLine
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/[-+]?\d+[.,]\d{1,2}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function buildSimpleItemFromLine(line: string): SimpleTicketItem | null {
-  if (!line || isSimpleSummaryLine(line)) return null;
+function isSummaryLikeItem(name: string, sourceLine: string, lineAmount: number, totalAmount: number | null): boolean {
+  const text = `${name} ${sourceLine}`.toLowerCase();
+  const softSummaryTokens = [
+    "suma",
+    "subtotal",
+    "total",
+    "tax",
+    "iva",
+    "impuesto",
+    "descuento",
+    "discount",
+    "סכום",
+    "סהכ",
+  ];
 
-  const amounts = extractDecimalValues(line);
-  if (amounts.length === 0) return null;
+  const hardSummaryTokens = ["לתשלום", "מעמ", "תשלום"];
 
-  // Keep the final amount shown in the line (avoids picking per-kg price).
-  const lineTotal = amounts[amounts.length - 1];
-  if (!Number.isFinite(lineTotal)) return null;
-
-  const title = cleanTitle(line);
-  if (!title || !hasProductLikeTitle(title)) return null;
-
-  return {
-    title,
-    qty: parseQty(null, line),
-    lineTotal,
-    sourceLine: line,
-  };
-}
-
-function dedupeSimpleItems(items: SimpleTicketItem[]): SimpleTicketItem[] {
-  const unique: SimpleTicketItem[] = [];
-
-  for (const item of items) {
-    const normalizedTitle = item.title.toLowerCase();
-    const exists = unique.some((candidate) => {
-      const candidateTitle = candidate.title.toLowerCase();
-      const titleMatches = candidateTitle === normalizedTitle || candidateTitle.includes(normalizedTitle) || normalizedTitle.includes(candidateTitle);
-      const amountMatches = Math.abs(candidate.lineTotal - item.lineTotal) <= 0.03;
-      return titleMatches && amountMatches;
-    });
-    if (!exists) unique.push(item);
+  if (hardSummaryTokens.some((token) => text.includes(token))) {
+    return true;
   }
 
-  return unique;
+  if (!softSummaryTokens.some((token) => text.includes(token))) {
+    return false;
+  }
+
+  if (totalAmount === null) return false;
+  return Math.abs(lineAmount - totalAmount) <= 0.05;
 }
 
-function buildSimpleItemsFromPayloadItems(rawPayload: ParsedScanPayload): SimpleTicketItem[] {
+type NormalizedItem = {
+  name: string;
+  qty: number;
+  lineTotal: number;
+  unitPrice: number | null;
+  discount: number;
+};
+
+function normalizeScannedItems(rawPayload: ParsedScanPayload): NormalizedItem[] {
   const rawItems = Array.isArray(rawPayload.items)
     ? (rawPayload.items as ParsedLineItem[])
     : [];
+  const totalAmount = toFiniteNumber(rawPayload.amount);
 
   return rawItems
     .map((item) => {
+      const inputName = normalizeItemName(toSafeText(item.name));
       const sourceLine = toSafeText(item.sourceLine);
-      const sourceAmounts = extractDecimalValues(sourceLine);
-      const candidateLineTotal =
-        toFiniteNumber(item.totalPrice)
-        ?? toFiniteNumber(item.lineTotal)
-        ?? (sourceAmounts.length > 0 ? sourceAmounts[sourceAmounts.length - 1] : null)
-        ?? toFiniteNumber(item.unitPrice);
+      const fallbackName = normalizeItemName(extractNameFromSourceLine(sourceLine));
+      const name = inputName || fallbackName;
+      const qty = toFiniteNumber(item.qty);
+      const unitPrice = toFiniteNumber(item.unitPrice);
+      const totalPrice = toFiniteNumber(item.totalPrice);
+      const discount = toFiniteNumber(item.discount);
 
-      if (candidateLineTotal === null) return null;
-
-      const name = cleanTitle(toSafeText(item.name)) || cleanTitle(sourceLine);
-      if (!name || !hasProductLikeTitle(name) || isSummaryFooterLine(sourceLine)) return null;
+      const lineTotal = totalPrice ?? unitPrice;
+      if (!name || lineTotal === null) return null;
+      if (isSummaryLikeItem(name, sourceLine, lineTotal, totalAmount)) return null;
 
       return {
-        title: name,
-        qty: parseQty(item.qty, sourceLine),
-        lineTotal: candidateLineTotal,
-        sourceLine,
+        name,
+        qty: qty !== null && qty > 0 ? qty : 1,
+        lineTotal,
+        unitPrice,
+        discount: discount ?? 0,
       };
     })
-    .filter((entry): entry is SimpleTicketItem => Boolean(entry));
-}
-
-function buildSimpleItemsFromLines(rawPayload: ParsedScanPayload): SimpleTicketItem[] {
-  const fromPurchaseSection = toSafeLines(rawPayload.purchaseSectionLines);
-  const fromOcrLines = extractPurchaseSectionFromOcrLines(toSafeLines(rawPayload.ocrLines));
-  const fromRawSummary = toSafeText(rawPayload.purchaseSummaryRaw)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  return uniqueInOrder([...fromPurchaseSection, ...fromOcrLines, ...fromRawSummary])
-    .map((line) => buildSimpleItemFromLine(line))
-    .filter((entry): entry is SimpleTicketItem => Boolean(entry));
-}
-
-function evaluateMath(items: SimpleTicketItem[], totalAmount: number | null) {
-  const sum = items.reduce((acc, item) => acc + item.lineTotal, 0);
-  if (totalAmount === null) {
-    return { sum, diff: 0, ok: items.length > 0 };
-  }
-
-  const diff = Math.abs(sum - totalAmount);
-  const tolerance = Math.max(0.75, totalAmount * 0.04);
-  return { sum, diff, ok: diff <= tolerance && items.length > 0 };
-}
-
-function selectSimpleItems(rawPayload: ParsedScanPayload) {
-  const totalAmount = toFiniteNumber(rawPayload.amount);
-  const fromPayloadItems = dedupeSimpleItems(buildSimpleItemsFromPayloadItems(rawPayload));
-  const fromLines = dedupeSimpleItems(buildSimpleItemsFromLines(rawPayload));
-  const merged = dedupeSimpleItems([...fromLines, ...fromPayloadItems]);
-
-  const payloadEval = evaluateMath(fromPayloadItems, totalAmount);
-  const lineEval = evaluateMath(fromLines, totalAmount);
-  const mergedEval = evaluateMath(merged, totalAmount);
-
-  if (merged.length > 0) {
-    if (mergedEval.ok) {
-      return { items: merged, ...mergedEval, reanalyzed: true };
-    }
-
-    if (fromLines.length > fromPayloadItems.length) {
-      return { items: merged, ...mergedEval, reanalyzed: true };
-    }
-
-    if (payloadEval.ok) {
-      return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
-    }
-
-    if (lineEval.ok) {
-      return { items: fromLines, ...lineEval, reanalyzed: true };
-    }
-
-    return { items: merged, ...mergedEval, reanalyzed: true };
-  }
-
-  if (payloadEval.ok) {
-    return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
-  }
-
-  if (lineEval.ok) {
-    return { items: fromLines, ...lineEval, reanalyzed: true };
-  }
-
-  if (fromLines.length >= fromPayloadItems.length) {
-    return { items: fromLines, ...lineEval, reanalyzed: true };
-  }
-
-  return { items: fromPayloadItems, ...payloadEval, reanalyzed: false };
+    .filter((entry): entry is NormalizedItem => Boolean(entry));
 }
 
 function buildItemizedDetails(rawPayload: ParsedScanPayload, currency: string): string {
-  const selected = selectSimpleItems(rawPayload);
+  const lines = normalizeScannedItems(rawPayload).map((item) => {
+    const discountText = item.discount > 0
+      ? ` (desc. ${formatCompactAmount(item.discount, currency)})`
+      : "";
 
-  if (selected.items.length > 0) {
-    return selected.items
-      .map((item) => `- x${item.qty} ${item.title} ${formatCompactAmount(item.lineTotal, currency)}`)
-      .join("\n");
+    return `- x${item.qty} ${item.name} ${formatCompactAmount(item.lineTotal, currency)}${discountText}`;
+  });
+
+  if (lines.length === 0) {
+    return toSafeText(rawPayload.details);
   }
 
-  const rawSummary = toSafeText(rawPayload.purchaseSummaryRaw);
-  if (rawSummary) return rawSummary;
-
-  return toSafeText(rawPayload.details);
+  return lines.join("\n");
 }
 
 function buildVirtualTicket(rawPayload: ParsedScanPayload, currency: string) {
-  const selected = selectSimpleItems(rawPayload);
+  const items = normalizeScannedItems(rawPayload).map((item) => ({
+    name: item.name,
+    qty: item.qty,
+    lineTotal: item.lineTotal,
+    unitPrice: item.unitPrice,
+    discount: item.discount,
+  }));
 
   return {
     currency,
     total: toFiniteNumber(rawPayload.amount) ?? 0,
-    items: selected.items.map((item) => ({
-      name: item.title,
-      qty: item.qty,
-      lineTotal: item.lineTotal,
-      sourceLine: item.sourceLine,
-    })),
-    mathCheckPassed: selected.ok,
-    mathDiff: selected.diff,
-    reanalyzed: selected.reanalyzed,
+    items,
   };
 }
 
@@ -429,17 +211,6 @@ RESPONDE ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones, sin b
   "desc": string,
   "tag": string,
   "date": string,
-  "purchaseSummaryRaw": string,
-  "purchaseSectionLines": [string],
-  "ocrLines": [string],
-  "simpleItems": [
-    {
-      "title": string,
-      "qty": number,
-      "lineTotal": number,
-      "sourceLine": string
-    }
-  ],
   "details": string,
   "confidence": number,
   "subtotal": number,
@@ -463,11 +234,7 @@ Reglas:
 - "desc": Nombre del comercio/servicio conciso (ej: "McDonald's", "YPF", "Amazon")
 - "tag": Categoría sugerida, DEBE ser una de: alimentacion, transporte, salud, entretenimiento, viajes, suscripcion, servicios, educacion, ropa, hogar, tecnologia, otro
 - "date": Fecha en formato YYYY-MM-DD. Si no hay fecha visible, usa "${new Date().toISOString().split("T")[0]}"
-- "purchaseSummaryRaw": transcripción LITERAL del bloque de compra (ítems/descuentos) tal cual aparece en el ticket, mismo idioma, mismo orden de líneas, sin traducir, sin resumir y sin corregir OCR.
-- "purchaseSectionLines": mismo contenido que purchaseSummaryRaw, pero como array (1 elemento por línea visual del ticket).
-- "ocrLines": OCR completo de todo el ticket en orden visual estricto (1 elemento por línea visual).
-- "simpleItems": lista SIMPLE para UI: solo título, unidades y precio final pagado por línea.
-- "details": copia exacta de "purchaseSummaryRaw".
+- "details": Resumen libre del ticket (si no puedes extraer ítems)
 - "confidence": 0 a 100, qué tan seguro estás de la lectura
 - "subtotal": subtotal antes de descuentos e impuestos cuando exista
 - "discountTotal": descuento total aplicado en el ticket (0 si no hay)
@@ -479,12 +246,6 @@ Reglas:
 - Si una línea es ambigua, conserva igual el item con el mejor nombre posible en lugar de descartarlo.
 - Si no ves cantidad explícita, usa qty=1.
 - Para cada item agrega "sourceLine" con el texto OCR exacto de la línea original de ese item.
-- En "simpleItems", lineTotal DEBE ser el importe final cobrado de esa línea, no el precio por kilo/unidad.
-- Ejemplo: si la línea dice "frutilla 22.5 x k 20.86", extrae title="frutilla" y lineTotal=20.86.
-- En "simpleItems", qty debe ser unidades compradas (si no se ve, usar 1).
-- No normalices texto, no cambies signos, no transliteres, no traduzcas hebreo/español/inglés.
-- Prioriza fidelidad textual por encima de interpretación semántica.
-- Si dudas entre dos lecturas, conserva la lectura más literal que aparece en la imagen.
 - Si el ticket muestra múltiples subtotales, toma el TOTAL GENERAL
 - Si hay propinas opcionales, NO las incluyas salvo que el monto final ya las incluya
 - Si el documento no parece un comprobante de pago, devuelve { "error": "No es un comprobante" }`;
@@ -577,7 +338,7 @@ export async function POST(req: NextRequest) {
         },
       ],
       temperature: 0.1,
-      max_tokens: 1200,
+      max_tokens: 512,
       response_format: { type: "json_object" },
     };
 
@@ -666,12 +427,7 @@ export async function POST(req: NextRequest) {
         ? parsed.currency
         : "USD";
 
-    const selectedSimple = selectSimpleItems(parsed);
-    const resolvedDetails = selectedSimple.items.length > 0
-      ? selectedSimple.items
-        .map((item) => `- x${item.qty} ${item.title} ${formatCompactAmount(item.lineTotal, resolvedCurrency)}`)
-        .join("\n")
-      : buildItemizedDetails(parsed, resolvedCurrency);
+    const resolvedDetails = buildItemizedDetails(parsed, resolvedCurrency);
 
     return NextResponse.json({
       amount: toFiniteNumber(parsed.amount) ?? 0,
@@ -680,13 +436,6 @@ export async function POST(req: NextRequest) {
       tag: toSafeText(parsed.tag) || "otro",
       date: toSafeText(parsed.date) || new Date().toISOString().split("T")[0],
       details: resolvedDetails,
-      purchaseSummaryRaw: toSafeText(parsed.purchaseSummaryRaw) || resolvedDetails,
-      purchaseSectionLines: toSafeLines(parsed.purchaseSectionLines),
-      ocrLines: toSafeLines(parsed.ocrLines),
-      simpleItems: selectedSimple.items,
-      mathCheckPassed: selectedSimple.ok,
-      mathDiff: selectedSimple.diff,
-      reanalyzed: selectedSimple.reanalyzed,
       confidence: toFiniteNumber(parsed.confidence) ?? 70,
       items: Array.isArray(parsed.items) ? parsed.items : [],
       subtotal: toFiniteNumber(parsed.subtotal),

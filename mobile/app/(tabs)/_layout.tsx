@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { View, StyleSheet, Platform, TouchableOpacity, DeviceEventEmitter, Text, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -100,7 +100,16 @@ export default function TabLayout() {
   const { width } = useWindowDimensions();
   const { theme: C } = useTheme();
   const { t } = useLanguage();
+  const { session, loading } = useAuth();
   const [showAdd, setShowAdd] = useState(false);
+
+  if (loading) {
+    return null;
+  }
+
+  if (!session) {
+    return <Redirect href="/login" />;
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: C.bg }]}>

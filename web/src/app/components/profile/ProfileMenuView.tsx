@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { formatCurrency } from '../../../lib/utils';
 import { useLanguage } from '../../../context/LanguageContext';
+import type { SupportedCurrency } from '@safed/shared/types';
 
 type CurrencyOption = {
-    value: 'ILS' | 'USD' | 'ARS' | 'EUR';
+    value: SupportedCurrency;
     label: string;
 };
 
@@ -15,8 +16,10 @@ type ProfileMenuViewProps = {
     monthlyGoal: number;
     sym: string;
     daysLeft: number;
-    globalCurrency: 'ILS' | 'USD' | 'ARS' | 'EUR';
+    globalCurrency: SupportedCurrency;
     currencyOptions: readonly CurrencyOption[];
+    favoriteCurrencies: readonly SupportedCurrency[];
+    onFavoriteCurrenciesChange: (currencies: SupportedCurrency[]) => Promise<boolean>;
     lang: 'es' | 'en';
     bankSyncEnabled: boolean;
     uniqueCategories: Array<{ tag: string; icon: string; count: number }>;
@@ -26,7 +29,7 @@ type ProfileMenuViewProps = {
     showAdminReports: boolean;
     onOpenIdentity: () => void;
     onOpenGoal: () => void;
-    onCurrencyChange: (currency: 'ILS' | 'USD' | 'ARS' | 'EUR') => void;
+    onCurrencyChange: (currency: SupportedCurrency) => void;
     onLanguageChange: (lang: 'es' | 'en') => void;
     onOpenNotifications: () => void;
     onOpenCategories: () => void;
@@ -46,6 +49,8 @@ export const ProfileMenuView = ({
     daysLeft,
     globalCurrency,
     currencyOptions,
+    favoriteCurrencies,
+    onFavoriteCurrenciesChange,
     lang,
     bankSyncEnabled,
     uniqueCategories,
@@ -65,6 +70,26 @@ export const ProfileMenuView = ({
     onLogout,
 }: ProfileMenuViewProps) => {
     const { t } = useLanguage();
+    const [currencySearch, setCurrencySearch] = useState('');
+    const [savingFavorites, setSavingFavorites] = useState(false);
+    const [favoritesError, setFavoritesError] = useState(false);
+    const [isCurrencyModalOpen, setIsCurrencyModalOpen] = useState(false);
+    const filteredCurrencyOptions = useMemo(() => {
+        const query = currencySearch.trim().toLocaleLowerCase();
+        return query ? currencyOptions.filter(option => option.label.toLocaleLowerCase().includes(query) || option.value.toLowerCase().includes(query)) : currencyOptions;
+    }, [currencyOptions, currencySearch]);
+    const primaryCurrencyOptions = currencyOptions.filter(option => favoriteCurrencies.includes(option.value));
+
+    const toggleFavoriteCurrency = async (currency: SupportedCurrency) => {
+        if (savingFavorites || currency === globalCurrency) return;
+        setSavingFavorites(true);
+        const next = favoriteCurrencies.includes(currency)
+            ? favoriteCurrencies.filter(item => item !== currency)
+            : [...favoriteCurrencies, currency];
+        const saved = await onFavoriteCurrenciesChange(next);
+        setFavoritesError(!saved);
+        setSavingFavorites(false);
+    };
 
     return (
         <>
@@ -115,13 +140,16 @@ export const ProfileMenuView = ({
                     <select
                         className="profile-currency-select"
                         value={globalCurrency}
-                        onChange={e => onCurrencyChange(e.target.value as 'ILS' | 'USD' | 'ARS' | 'EUR')}
+                        onChange={e => onCurrencyChange(e.target.value as SupportedCurrency)}
                     >
-                        {currencyOptions.map(option => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
+                        {(primaryCurrencyOptions.length ? primaryCurrencyOptions : currencyOptions.filter(option => option.value === globalCurrency)).map(option => (
+                            <option key={option.value} value={option.value}>{option.value}</option>
                         ))}
                     </select>
                     <span className="profile-card-sub">{t('profile.currency_sub')}</span>
+                    <button type="button" onClick={() => setIsCurrencyModalOpen(true)} style={{ marginTop: '0.8rem', padding: '0.55rem 0.7rem', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface-alt)', color: 'var(--text-main)', font: 'inherit', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer' }}>
+                        {lang === 'es' ? `Gestionar favoritas (${favoriteCurrencies.length})` : `Manage favorites (${favoriteCurrencies.length})`}
+                    </button>
                 </div>
 
                 <div className="profile-card">
@@ -282,6 +310,41 @@ export const ProfileMenuView = ({
                 </svg>
                 {t('profile.logout')}
             </button>
+
+            {isCurrencyModalOpen && (
+                <div role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setIsCurrencyModalOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,.68)', display: 'grid', placeItems: 'center', padding: '1rem' }}>
+                    <section role="dialog" aria-modal="true" aria-labelledby="currency-favorites-title" style={{ width: 'min(100%, 480px)', maxHeight: 'min(80vh, 700px)', display: 'flex', flexDirection: 'column', background: 'var(--surface)', color: 'var(--text-main)', border: '1px solid var(--border)', borderRadius: 12, padding: '1rem' }}>
+                        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                            <h2 id="currency-favorites-title" style={{ margin: 0, fontSize: '1rem' }}>{lang === 'es' ? 'Divisas favoritas' : 'Favorite currencies'}</h2>
+                            <button type="button" aria-label={lang === 'es' ? 'Cerrar' : 'Close'} onClick={() => setIsCurrencyModalOpen(false)} style={{ border: 0, background: 'transparent', color: 'inherit', fontSize: '1.4rem', cursor: 'pointer' }}>×</button>
+                        </header>
+                        <p style={{ margin: '0.65rem 0', color: 'var(--text-muted)', fontSize: '0.75rem' }}>{lang === 'es' ? 'La divisa principal se cambia desde el perfil. Mantén al menos una favorita.' : 'Change the primary currency from the profile. Keep at least one favorite.'}</p>
+                        <input
+                            className="profile-currency-select"
+                            type="search"
+                            value={currencySearch}
+                            onChange={event => setCurrencySearch(event.target.value)}
+                            placeholder={lang === 'es' ? 'Buscar moneda…' : 'Search currency…'}
+                            aria-label={lang === 'es' ? 'Buscar moneda favorita' : 'Search favorite currency'}
+                            style={{ padding: '0.65rem', border: '1px solid var(--border)', borderRadius: 7, background: 'var(--surface-alt)', fontSize: '0.85rem' }}
+                        />
+                        <div style={{ overflowY: 'auto', marginTop: '0.5rem', opacity: savingFavorites ? 0.6 : 1 }}>
+                            {filteredCurrencyOptions.map(option => {
+                                const checked = favoriteCurrencies.includes(option.value);
+                                return (
+                                    <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.5rem 0.25rem', borderBottom: '1px solid var(--border)', cursor: option.value === globalCurrency ? 'default' : 'pointer' }}>
+                                        <input type="checkbox" checked={checked} disabled={savingFavorites || option.value === globalCurrency} onChange={() => void toggleFavoriteCurrency(option.value)} />
+                                        <span style={{ minWidth: '3rem', fontWeight: 800 }}>{option.value}</span>
+                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{option.label.slice(option.value.length + 3)}</span>
+                                        {option.value === globalCurrency && <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--primary)', fontWeight: 800 }}>{lang === 'es' ? 'PRINCIPAL' : 'PRIMARY'}</span>}
+                                    </label>
+                                );
+                            })}
+                        </div>
+                        {favoritesError && <span role="status" style={{ display: 'block', marginTop: '0.5rem', color: 'var(--accent)', fontSize: '0.7rem' }}>{lang === 'es' ? 'No se pudo guardar. Comprueba el límite de monedas de tu plan.' : 'Could not save. Check your plan currency limit.'}</span>}
+                    </section>
+                </div>
+            )}
         </>
     );
 };

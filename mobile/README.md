@@ -63,8 +63,11 @@ pnpm install --no-frozen-lockfile
 Variables necesarias:
 
 - `EXPO_PUBLIC_EAS_PROJECT_ID`: project id de Expo/EAS.
-- `EXPO_PUBLIC_PRO_YEARLY_URL`: checkout externo para Safadd+ anual.
-- `EXPO_PUBLIC_PRO_LIFETIME_URL`: checkout externo para Safadd+ lifetime.
+- `EXPO_PUBLIC_REVENUECAT_API_KEY_ANDROID`: public SDK key de RevenueCat para Android.
+- `EXPO_PUBLIC_REVENUECAT_API_KEY_IOS`: public SDK key de RevenueCat para iOS.
+- `EXPO_PUBLIC_PRO_YEARLY_URL`: identificador de package o product para Safadd+ anual en RevenueCat.
+- `EXPO_PUBLIC_PRO_LIFETIME_URL`: identificador de package o product para Safadd+ lifetime en RevenueCat.
+- `EXPO_PUBLIC_REVENUECAT_PRO_ENTITLEMENT`: opcional, entitlement que habilita Pro. Si falta, mobile toma cualquier entitlement activo como Pro.
 
 Builds y updates:
 

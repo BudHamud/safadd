@@ -8,6 +8,7 @@ import { GoalCard } from './GoalCard';
 import { TopCatsCard } from './TopCatsCard';
 import { RecentActivityCard } from './RecentActivityCard';
 import { PaymentSheetCard } from './PaymentSheetCard';
+import type { SupportedCurrency } from '@safed/shared/types';
 
 type DashboardTabProps = {
     transactions: Transaction[];
@@ -17,7 +18,7 @@ type DashboardTabProps = {
     monthlyGoal: number;
     savingsTarget: number;
     onTransactionClick: (tx: Transaction) => void;
-    globalCurrency: string;
+    globalCurrency: SupportedCurrency;
     isTravelMode?: boolean;
     toggleTravelMode?: () => Promise<void>;
     onAddClick?: () => void;

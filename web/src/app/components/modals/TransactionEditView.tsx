@@ -94,10 +94,9 @@ export const TransactionEditView = ({
             const dataRates = rateSnapshot.rates;
             const arsRate = rateSnapshot.usdToArs;
 
+            const inputRate = globalCurrency === 'ARS' ? arsRate : dataRates[globalCurrency];
             if (globalCurrency === 'USD') amountUSD = newAmount;
-            else if (globalCurrency === 'ILS') amountUSD = newAmount / dataRates.ILS;
-            else if (globalCurrency === 'EUR') amountUSD = newAmount / dataRates.EUR;
-            else if (globalCurrency === 'ARS') amountUSD = newAmount / arsRate;
+            else if (Number.isFinite(inputRate) && inputRate > 0) amountUSD = newAmount / inputRate;
 
             amountILS = amountUSD * dataRates.ILS;
             amountEUR = amountUSD * dataRates.EUR;

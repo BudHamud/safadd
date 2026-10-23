@@ -4,6 +4,7 @@ import { Session, User as AuthUser } from '@supabase/supabase-js';
 import { supabase, supabaseConfigError } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
 import { reportClientError } from '../lib/clientErrorReporter';
+import { addRevenueCatCustomerInfoListener, resetRevenueCatUser, syncRevenueCatUser } from '../lib/revenueCat';
 import { getItemWithLegacyKey } from '../lib/storage';
 import { PlanTier, Profile, UserPlan, UserPlanSyncStatus, WebUser } from '../types';
 import type { SupportedCurrency } from '@safed/shared/types';
@@ -252,6 +253,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const profileLoadPromiseRef = useRef<Promise<WebUser | null> | null>(null);
   const lastProfileTimeoutAtRef = useRef(0);
+  const lastRevenueCatRefreshAtRef = useRef(0);
   const sessionRef = useRef<Session | null>(null);
   const webUserRef = useRef<WebUser | null>(null);
 
@@ -282,8 +284,51 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, [session]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const syncPurchasesUser = async () => {
+      try {
+        if (session?.user?.id) {
+          await syncRevenueCatUser(session.user.id);
+        } else {
+          await resetRevenueCatUser();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('[AuthContext] RevenueCat user sync failed:', error);
+        }
+      }
+    };
+
+    void syncPurchasesUser();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
     webUserRef.current = webUser;
   }, [webUser]);
+
+  useEffect(() => {
+    const unsubscribe = addRevenueCatCustomerInfoListener(() => {
+      const authId = sessionRef.current?.user?.id;
+      if (!authId) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastRevenueCatRefreshAtRef.current < 2000) {
+        return;
+      }
+
+      lastRevenueCatRefreshAtRef.current = now;
+      void loadWebUser(authId, { force: true, silent: true });
+    });
+
+    return unsubscribe;
+  }, [loadWebUser]);
 
   const applyRemoteProfile = useCallback(async (payload: (WebUser & { email?: string | null; plan?: UserPlan | null }) | null) => {
     if (!payload) {
@@ -670,6 +715,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     await supabase.auth.signOut();
+    await resetRevenueCatUser().catch(() => undefined);
     setWebUser(null);
     setPlan(null);
     sessionRef.current = null;

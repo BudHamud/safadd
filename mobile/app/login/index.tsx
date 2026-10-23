@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Redirect } from 'expo-router';
 import {
   View, Text, TextInput, StyleSheet,
   TouchableOpacity, KeyboardAvoidingView,
@@ -37,7 +38,7 @@ function normalizeSearchValue(value: string) {
 }
 
 export default function LoginScreen() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, session, loading: authLoading } = useAuth();
   const { t, lang } = useLanguage();
   const appVersion = Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? '1.1.0';
   const { theme: C } = useTheme();
@@ -340,6 +341,14 @@ export default function LoginScreen() {
     }
   };
 
+  if (authLoading) {
+    return null;
+  }
+
+  if (session) {
+    return <Redirect href="/(tabs)" />;
+  }
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: C.bg }]}>
       <KeyboardAvoidingView
@@ -442,8 +451,8 @@ export default function LoginScreen() {
                   </Text>
                   <Text style={[styles.goalHelp, { color: C.textMuted }]}> 
                     {lang === 'en'
-                      ? 'Set your monthly limit, choose one primary currency, and add any secondary currencies you need.'
-                      : 'Defini tu limite mensual, elegi una moneda principal y suma las secundarias que necesites.'}
+                      ? 'Set your monthly limit, choose one primary currency, and optionally add one secondary currency.'
+                      : 'Defini tu limite mensual, elegi una moneda principal y, si queres, suma una sola moneda secundaria.'}
                   </Text>
 
                   <Text style={[styles.authLabel, { color: C.textMuted, marginTop: 10 }]}> 
@@ -473,7 +482,12 @@ export default function LoginScreen() {
                   </View>
 
                   <Text style={[styles.authLabel, { color: C.textMuted, marginTop: 10 }]}> 
-                    {lang === 'en' ? 'Secondary currencies' : 'Monedas secundarias'}
+                    {lang === 'en' ? 'Secondary currency (optional)' : 'Moneda secundaria (opcional)'}
+                  </Text>
+                  <Text style={[styles.goalHelp, { color: C.textMuted }]}> 
+                    {lang === 'en'
+                      ? 'You can select up to one secondary currency.'
+                      : 'Podes seleccionar como maximo una moneda secundaria.'}
                   </Text>
                   <View style={styles.selectionChipsWrap}>
                     {secondaryCurrencies.length > 0 ? secondaryCurrencies.map((code) => {
@@ -486,7 +500,7 @@ export default function LoginScreen() {
                       );
                     }) : (
                       <Text style={[styles.goalHelp, { color: C.textMuted }]}> 
-                        {lang === 'en' ? 'No secondary currencies selected yet.' : 'Todavia no elegiste monedas secundarias.'}
+                        {lang === 'en' ? 'No secondary currency selected yet.' : 'Todavia no elegiste una moneda secundaria.'}
                       </Text>
                     )}
                   </View>
@@ -577,7 +591,7 @@ export default function LoginScreen() {
                                   setSecondaryCurrencies((prev) => (
                                     prev.includes(code)
                                       ? prev.filter((value) => value !== code)
-                                      : [...prev, code]
+                                      : [code]
                                   ));
                                 }}
                                 activeOpacity={0.82}
@@ -585,7 +599,9 @@ export default function LoginScreen() {
                                 <Text style={[styles.currencyActionToggleText, { color: isSecondary ? C.primary : C.textMuted }]}>
                                   {isSecondary
                                     ? (lang === 'en' ? 'REMOVE' : 'QUITAR')
-                                    : (lang === 'en' ? 'ADD' : 'SUMAR')}
+                                    : secondaryCurrencies.length > 0
+                                      ? (lang === 'en' ? 'REPLACE' : 'REEMPLAZAR')
+                                      : (lang === 'en' ? 'ADD' : 'SUMAR')}
                                 </Text>
                               </TouchableOpacity>
                             )}

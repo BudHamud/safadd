@@ -7,6 +7,8 @@ import { useAuthSession } from "../hooks/useAuthSession";
 import { useOfflineSync } from "../hooks/useOfflineSync";
 import { useColorSystem } from "../hooks/useColorSystem";
 import { useTransactions } from "../hooks/useTransactions";
+import type { SupportedCurrency } from "@safed/shared/types";
+import { SUPPORTED_CURRENCIES } from "@safed/shared/currency";
 
 type GlobalContextType = {
     isClient: boolean;
@@ -17,7 +19,8 @@ type GlobalContextType = {
     accessToken: string | null;
     userGoal: number;
     theme: string;
-    globalCurrency: 'ILS' | 'USD' | 'ARS' | 'EUR';
+    globalCurrency: SupportedCurrency;
+    favoriteCurrencies: SupportedCurrency[];
     transactions: Transaction[];
     mappedTransactions: Transaction[];
     selectedTransaction: Transaction | null;
@@ -51,7 +54,8 @@ type GlobalContextType = {
     toggleTheme: () => void;
     handleLogin: (uid: string, un: string, token?: string, refreshToken?: string) => void;
     handleLogout: () => void;
-    handleCurrencyChange: (curr: 'ILS' | 'USD' | 'ARS' | 'EUR') => void;
+    handleCurrencyChange: (curr: SupportedCurrency) => void;
+    handleFavoriteCurrenciesChange: (currencies: SupportedCurrency[]) => Promise<boolean>;
     toggleTravelMode: () => Promise<void>;
     saveTransaction: (tx: Transaction) => Promise<void>;
     updateTransaction: (tx: Transaction) => Promise<void>;
@@ -73,7 +77,8 @@ const AppContext = createContext<GlobalContextType | undefined>(undefined);
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
     const [theme, setTheme] = useState("dark");
-    const [globalCurrency, setGlobalCurrency] = useState<'ILS' | 'USD' | 'ARS' | 'EUR'>('ILS');
+    const [globalCurrency, setGlobalCurrency] = useState<SupportedCurrency>('ILS');
+    const [favoriteCurrencies, setFavoriteCurrencies] = useState<SupportedCurrency[]>(['ILS']);
     const [travelModeStart, setTravelModeStart] = useState<string | null>(null);
     const [catSignal, setCatSignal] = useState(0);
     const savingsTarget = 200;
@@ -111,8 +116,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setTheme(storedTheme);
         document.documentElement.setAttribute('data-theme', storedTheme);
 
-        const storedCurrency = localStorage.getItem("app-currency") as 'ILS' | 'USD' | 'ARS' | 'EUR';
-        if (storedCurrency) setGlobalCurrency(storedCurrency);
+        const storedCurrency = localStorage.getItem("app-currency");
+        if (storedCurrency && (SUPPORTED_CURRENCIES as readonly string[]).includes(storedCurrency)) setGlobalCurrency(storedCurrency as SupportedCurrency);
 
         localStorage.removeItem('financeTravelModeStart');
         setTravelModeStart(null);
@@ -126,10 +131,52 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         localStorage.setItem("app-theme", nextTheme);
     };
 
-    const handleCurrencyChange = (curr: 'ILS' | 'USD' | 'ARS' | 'EUR') => {
+    const handleCurrencyChange = (curr: SupportedCurrency) => {
         setGlobalCurrency(curr);
+        setFavoriteCurrencies(current => current.includes(curr) ? current : [...current, curr]);
         localStorage.setItem("app-currency", curr);
+        void auth.authenticatedFetch('/api/user', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ currency: curr }),
+        }).catch(() => {});
     };
+
+    const handleFavoriteCurrenciesChange = async (currencies: SupportedCurrency[]) => {
+        const next = Array.from(new Set([globalCurrency, ...currencies]));
+        try {
+            const response = await auth.authenticatedFetch('/api/user', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currency: globalCurrency, availableCurrencies: next }),
+            });
+            if (!response.ok) return false;
+            const profile = await response.json();
+            const saved = (profile.availableCurrencies as string[]).filter((value): value is SupportedCurrency =>
+                (SUPPORTED_CURRENCIES as readonly string[]).includes(value));
+            setFavoriteCurrencies(saved.length ? saved : [globalCurrency]);
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
+    useEffect(() => {
+        if (!auth.userId) return;
+        void auth.authenticatedFetch('/api/user').then(async (res) => {
+            if (!res.ok) return;
+            const profile = await res.json();
+            if ((SUPPORTED_CURRENCIES as readonly string[]).includes(profile.currency)) {
+                setGlobalCurrency(profile.currency as SupportedCurrency);
+                localStorage.setItem('app-currency', profile.currency);
+            }
+            if (Array.isArray(profile.availableCurrencies)) {
+                const saved = profile.availableCurrencies.filter((value: string): value is SupportedCurrency =>
+                    (SUPPORTED_CURRENCIES as readonly string[]).includes(value));
+                setFavoriteCurrencies(saved.length ? saved : [profile.currency as SupportedCurrency]);
+            }
+        }).catch(() => {});
+        // authenticatedFetch is recreated on render; key this profile sync to auth changes only.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [auth.userId]);
 
     const toggleTravelMode = async () => {
         localStorage.removeItem('financeTravelModeStart');
@@ -164,7 +211,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             userRole: auth.userRole,
             accessToken: auth.accessToken,
             userGoal: auth.userGoal,
-            theme, setTheme, globalCurrency,
+            theme, setTheme, globalCurrency, favoriteCurrencies,
             transactions: txs.transactions,
             mappedTransactions: txs.mappedTransactions,
             selectedTransaction: txs.selectedTransaction,
@@ -183,6 +230,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             handleLogin,
             handleLogout: auth.handleLogout,
             handleCurrencyChange,
+            handleFavoriteCurrenciesChange,
             toggleTravelMode,
             saveTransaction: txs.saveTransaction,
             updateTransaction: txs.updateTransaction,

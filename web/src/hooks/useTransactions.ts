@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import React from "react";
 import { Transaction, Category } from "../types";
+import type { SupportedCurrency } from "@safed/shared/types";
+import type { ExchangeRateSnapshot } from "@safed/shared/types";
+import { getTransactionAmount } from "@safed/shared/currency";
 import { normalizeTag } from "@safed/shared/category";
 import {
     cacheTransactions,
@@ -18,7 +21,7 @@ type AuthenticatedFetch = (input: RequestInfo | URL, init?: RequestInit, preferr
 
 export function useTransactions(
     userId: string | null,
-    globalCurrency: 'ILS' | 'USD' | 'ARS' | 'EUR',
+    globalCurrency: SupportedCurrency,
     travelModeStart: string | null,
     authenticatedFetch: AuthenticatedFetch,
     setPendingOpsCount: (count: number) => void,
@@ -29,6 +32,20 @@ export function useTransactions(
     const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [addModalInitialData, setAddModalInitialData] = useState<Partial<Transaction> | null>(null);
+    const [exchangeRates, setExchangeRates] = useState<ExchangeRateSnapshot | null>(null);
+
+    useEffect(() => {
+        if (!userId) return;
+        let active = true;
+        void authenticatedFetch('/api/exchange-rates').then(async (res) => {
+            if (!res.ok) return;
+            const snapshot = await res.json();
+            if (active && snapshot?.rates && typeof snapshot.rates === 'object') setExchangeRates(snapshot as ExchangeRateSnapshot);
+        }).catch(() => {});
+        return () => { active = false; };
+        // authenticatedFetch is recreated on render; the rates are scoped to the signed-in user.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId]);
 
     const loadUserTransactions = useCallback(async (uid: string, token?: string | null) => {
         setIsLoadingTransactions(true);
@@ -183,11 +200,7 @@ export function useTransactions(
     }, [transactions, catSignal]);
 
     let mappedTransactions = transactions.filter(Boolean).map(t => {
-        let val = t.amount;
-        if (globalCurrency === 'USD' && t.amountUSD != null) val = t.amountUSD;
-        if (globalCurrency === 'ARS' && t.amountARS != null) val = t.amountARS;
-        if (globalCurrency === 'EUR' && t.amountEUR != null) val = t.amountEUR;
-        if (globalCurrency === 'ILS' && t.amountILS != null) val = t.amountILS;
+        const val = getTransactionAmount(t, globalCurrency, exchangeRates);
         return { ...t, amount: val };
     });
 

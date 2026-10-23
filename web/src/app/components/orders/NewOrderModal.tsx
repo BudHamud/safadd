@@ -23,7 +23,7 @@ const GOAL_LABEL_KEYS = {
 } as const;
 
 export const NewOrderModal = ({ isOpen, onClose, onSave, availableCategories, initialData, globalCurrency }: NewOrderModalProps) => {
-    const { authenticatedFetch, setCatSignal } = useAppContext();
+    const { authenticatedFetch, setCatSignal, favoriteCurrencies } = useAppContext();
     const { lang, t } = useLanguage();
     const dialog = useDialog();
 
@@ -49,13 +49,15 @@ export const NewOrderModal = ({ isOpen, onClose, onSave, availableCategories, in
     const [scanLimitReached, setScanLimitReached] = useState(false);
 
     const isEditing = !!initialData;
+    const orderCurrencyOptions = favoriteCurrencies.length ? favoriteCurrencies : [globalCurrency];
     const numberLocale = lang === 'en' ? 'en-US' : 'es-AR';
 
     // ── Hydrate form when modal opens ────────────────────────────────────────
     useEffect(() => {
         if (isOpen && !lastOpened) {
             if (initialData) {
-                const initialCurrency = ((initialData as any).currency || globalCurrency || 'ILS') as string;
+                const requestedCurrency = ((initialData as any).currency || globalCurrency || 'ILS') as string;
+                const initialCurrency = orderCurrencyOptions.includes(requestedCurrency as any) ? requestedCurrency : globalCurrency;
                 setFormData({
                     amount: initialData.amount ? initialData.amount.toString() : '',
                     currency: initialCurrency, desc: initialData.desc || '',
@@ -77,7 +79,7 @@ export const NewOrderModal = ({ isOpen, onClose, onSave, availableCategories, in
             setLastOpened(false);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [initialData, isOpen, globalCurrency, lastOpened]);
+    }, [initialData, isOpen, globalCurrency, lastOpened, favoriteCurrencies]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -113,7 +115,7 @@ export const NewOrderModal = ({ isOpen, onClose, onSave, availableCategories, in
             } else {
                 setFormData(prev => ({
                     ...prev,
-                    amount: data.amount?.toString() ?? prev.amount, currency: data.currency ?? prev.currency,
+                    amount: data.amount?.toString() ?? prev.amount, currency: orderCurrencyOptions.includes(data.currency) ? data.currency : prev.currency,
                     desc: data.desc ?? prev.desc, tag: data.tag ?? prev.tag,
                     date: data.date ?? prev.date, details: data.details ?? prev.details,
                 }));
@@ -144,10 +146,9 @@ export const NewOrderModal = ({ isOpen, onClose, onSave, availableCategories, in
             const rateSnapshot = await resGlobal.json();
             const dataRates = rateSnapshot.rates;
             const arsRate = rateSnapshot.usdToArs;
+            const inputRate = formData.currency === 'ARS' ? arsRate : dataRates[formData.currency];
             if (formData.currency === 'USD') amountUSD = amountInput;
-            else if (formData.currency === 'ILS') amountUSD = amountInput / dataRates.ILS;
-            else if (formData.currency === 'EUR') amountUSD = amountInput / dataRates.EUR;
-            else if (formData.currency === 'ARS') amountUSD = amountInput / arsRate;
+            else if (Number.isFinite(inputRate) && inputRate > 0) amountUSD = amountInput / inputRate;
             amountILS = amountUSD * dataRates.ILS;
             amountEUR = amountUSD * dataRates.EUR;
             amountARS = amountUSD * arsRate;
@@ -266,10 +267,7 @@ export const NewOrderModal = ({ isOpen, onClose, onSave, availableCategories, in
                         <div className="order-modal-amount-group">
                             <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                                 <select className="order-modal-currency-select" name="currency" value={formData.currency} onChange={handleInputChange}>
-                                    <option value="USD">USD</option>
-                                    <option value="ARS">ARS</option>
-                                    <option value="ILS">ILS</option>
-                                    <option value="EUR">EUR</option>
+                                    {orderCurrencyOptions.map(code => <option key={code} value={code}>{code}</option>)}
                                 </select>
                                 <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="3" style={{ position: 'absolute', right: '0.4rem', pointerEvents: 'none' }}>
                                     <polyline points="6 9 12 15 18 9" />
