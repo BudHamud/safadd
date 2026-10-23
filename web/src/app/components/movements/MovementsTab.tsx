@@ -71,7 +71,7 @@ export const MovementsTab = ({
         importDraft, setImportDraft, handleConfirmMapping,
         importReview, setImportReview,
         handleConfirmReview, importProgress,
-    } = useMovementsLogic(transactions, userId, globalCurrency, monthlyGoal, onTransactionsUpdated);
+    } = useMovementsLogic(transactions, userId, globalCurrency, monthlyGoal, onTransactionsUpdated, availableCategories);
 
     const { search, filterMonth, filterYear, filterType, showFilters, filterCategory, currentPage } = filters;
     const cardSpending = React.useMemo(() => {
@@ -231,6 +231,7 @@ export const MovementsTab = ({
             {importDraft && (
                 <ColumnMapModal
                     headers={importDraft.headers}
+                    cards={Array.from(new Set(transactions.map(tx => tx.cardDigits).filter((digits): digits is string => !!digits))).sort()}
                     onConfirm={handleConfirmMapping}
                     onCancel={() => setImportDraft(null)}
                     importProgress={null}

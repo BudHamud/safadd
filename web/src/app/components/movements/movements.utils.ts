@@ -135,10 +135,21 @@ export const exportToExcel = async (rows: Transaction[], filename: string, sym: 
     void sym;
     const data = rows.map(t => ({
         Fecha: formatDate(t.date),
-        Categoria: t.tag,
-        Monto: t.type === 'expense' ? -Math.abs(t.amount) : Math.abs(t.amount),
         Descripcion: t.desc,
+        Monto: t.type === 'expense' ? -Math.abs(t.amount) : Math.abs(t.amount),
         Detalles: t.details ?? '',
+        Categoria: t.tag,
+        Pago: t.paymentMethod === 'tarjeta'
+            ? `Tarjeta${t.cardDigits ? ` •••• ${t.cardDigits}` : ''}`
+            : 'Efectivo',
+        Tipo: t.goalType === 'mensual'
+            ? 'Mensualidad'
+            : t.goalType === 'periodo'
+                ? 'Periódico'
+                : t.goalType === 'meta'
+                    ? 'Meta'
+                    : 'Gasto único',
+        Frecuencia: t.goalType === 'periodo' ? (t.periodicity ?? '') : '',
     }));
     const ExcelJS = (await import('exceljs')).default;
     const workbook = new ExcelJS.Workbook();
@@ -146,10 +157,13 @@ export const exportToExcel = async (rows: Transaction[], filename: string, sym: 
 
     worksheet.columns = [
         { header: 'Fecha', key: 'Fecha', width: 14 },
-        { header: 'Categoria', key: 'Categoria', width: 24 },
-        { header: 'Monto', key: 'Monto', width: 14 },
         { header: 'Descripcion', key: 'Descripcion', width: 28 },
+        { header: 'Monto', key: 'Monto', width: 14 },
         { header: 'Detalles', key: 'Detalles', width: 42 },
+        { header: 'Categoria', key: 'Categoria', width: 24 },
+        { header: 'Forma de pago', key: 'Pago', width: 24 },
+        { header: 'Tipo de gasto', key: 'Tipo', width: 18 },
+        { header: 'Frecuencia (meses)', key: 'Frecuencia', width: 18 },
     ];
 
     for (const row of data) {
@@ -241,12 +255,18 @@ export const readWorkbookRows = async (file: File) => {
 // ─── Import (column-mapping types) ───────────────────────────────────────────
 
 export interface ColumnMapping {
+    amountMode: 'single' | 'separate';
     dateCol: string;
     descCol: string;
+    amountCol: string;
     debitCol: string;
     creditCol: string;
     detailsCol: string;
     categoryCol: string;
+    paymentCol: string;
+    recurrenceCol: string;
+    periodicityCol: string;
+    forceCardDigits: string;
 }
 
 // ─── Import (amount parser) ─────────────────────────────────────────────────
@@ -295,6 +315,8 @@ const pickField = (row: Record<string, unknown>, candidates: string[]): string =
 export interface ImportedRow {
     desc: string; amount: number; tag: string;
     type: 'income' | 'expense'; date: string; details: string;
+    paymentMethod: 'billete' | 'tarjeta'; cardDigits?: string;
+    goalType: 'unico' | 'mensual' | 'periodo' | 'meta'; periodicity?: number;
 }
 
 export const parseExcelRow = (row: Record<string, unknown>, fallbackYear: string, lastDate: string): { row: ImportedRow | null; resolvedDate: string } => {
@@ -354,6 +376,8 @@ export const parseExcelRow = (row: Record<string, unknown>, fallbackYear: string
             type,
             date: resolvedDate,
             details: details || '',
+            paymentMethod: 'billete',
+            goalType: 'unico',
         },
         resolvedDate,
     };
@@ -381,14 +405,23 @@ export const parseExcelRowMapped = (
     let amount = 0;
     let type: 'income' | 'expense' = 'expense';
 
-    const rawCredit = get(mapping.creditCol);
-    if (rawCredit) {
+    const rawAmount = mapping.amountMode === 'single' ? get(mapping.amountCol) : '';
+    const rawCredit = mapping.amountMode === 'separate' ? get(mapping.creditCol) : '';
+    if (rawAmount) {
+        const parsed = parseAmount(rawAmount);
+        if (parsed !== 0) {
+            amount = Math.abs(parsed);
+            type = parsed < 0 ? 'expense' : 'income';
+        }
+    }
+
+    if (amount === 0 && rawCredit) {
         const parsed = parseAmount(rawCredit);
         if (parsed !== 0) { amount = parsed; type = 'income'; }
     }
 
     if (amount === 0) {
-        const rawDebit = get(mapping.debitCol);
+        const rawDebit = mapping.amountMode === 'separate' ? get(mapping.debitCol) : '';
         if (rawDebit) {
             const parsed = parseAmount(rawDebit);
             if (parsed !== 0) { amount = parsed; type = 'expense'; }
@@ -400,11 +433,33 @@ export const parseExcelRowMapped = (
     const desc = get(mapping.descCol);
     const details = get(mapping.detailsCol);
     const tag = get(mapping.categoryCol) || 'custom';
+    const rawPayment = get(mapping.paymentCol);
+    const normalizedPayment = rawPayment.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const cardDigits = rawPayment.match(/(\d{4})(?!.*\d)/)?.[1];
+    const paymentMethod: 'billete' | 'tarjeta' = /tarjeta|card|credito|credit|debito|debit/.test(normalizedPayment) && cardDigits
+        ? 'tarjeta'
+        : 'billete';
+    const rawRecurrence = get(mapping.recurrenceCol).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const rawPeriodicity = get(mapping.periodicityCol);
+    const parsedPeriodicity = Number(rawPeriodicity.match(/\d+/)?.[0] ?? rawRecurrence.match(/\d+/)?.[0]);
+    const goalType: ImportedRow['goalType'] = /meta|goal/.test(rawRecurrence)
+        ? 'meta'
+        : /period|cada|recurr|custom/.test(rawRecurrence)
+            ? 'periodo'
+            : /mensual|monthly|month/.test(rawRecurrence)
+                ? 'mensual'
+                : 'unico';
 
     if (amount === 0 && !desc) return { row: null, resolvedDate };
 
     return {
-        row: { desc: desc || 'Importado', amount, tag, type, date: resolvedDate, details },
+        row: {
+            desc: desc || 'Importado', amount, tag, type, date: resolvedDate, details,
+            paymentMethod,
+            ...(paymentMethod === 'tarjeta' ? { cardDigits } : {}),
+            goalType,
+            ...(goalType === 'periodo' && Number.isInteger(parsedPeriodicity) && parsedPeriodicity > 0 ? { periodicity: parsedPeriodicity } : {}),
+        },
         resolvedDate,
     };
 };

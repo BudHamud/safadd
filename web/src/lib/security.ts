@@ -304,7 +304,7 @@ export function sanitizeTransactionInput(payload: any, options: SanitizeOptions 
 
     const tag = payload?.tag === undefined
         ? (partial ? undefined : 'OTROS')
-        : normalizeTagInput(payload.tag).slice(0, 64);
+      : normalizeText(payload.tag, 64);
 
     const type = payload?.type === undefined
         ? (partial ? undefined : 'expense')

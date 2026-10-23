@@ -31,10 +31,11 @@ const iconBtnStyle = (active = false): React.CSSProperties => ({
 const MAPPING_FIELDS: { key: keyof ColumnMapping; labelKey: string; required?: boolean }[] = [
     { key: 'dateCol', labelKey: 'field.date', required: true },
     { key: 'descCol', labelKey: 'field.description' },
-    { key: 'debitCol', labelKey: 'movements.import_debit_column' },
-    { key: 'creditCol', labelKey: 'movements.import_credit_column' },
     { key: 'detailsCol', labelKey: 'field.notes' },
     { key: 'categoryCol', labelKey: 'field.category' },
+    { key: 'paymentCol', labelKey: 'movements.import_payment_column' },
+    { key: 'recurrenceCol', labelKey: 'movements.import_recurrence_column' },
+    { key: 'periodicityCol', labelKey: 'movements.import_periodicity_column' },
 ];
 
 const autoDetect = (headers: string[], candidates: string[]): string => {
@@ -44,27 +45,36 @@ const autoDetect = (headers: string[], candidates: string[]): string => {
 
 type Props = {
     headers: string[];
+    cards: string[];
     onConfirm: (m: ColumnMapping) => void;
     onCancel: () => void;
     importProgress: { done: number; total: number } | null;
 };
 
-export const ColumnMapModal = ({ headers, onConfirm, onCancel, importProgress }: Props) => {
+export const ColumnMapModal = ({ headers, cards, onConfirm, onCancel, importProgress }: Props) => {
     const { t } = useLanguage();
     const buildDefault = (): ColumnMapping => ({
+        amountMode: 'single',
         dateCol: autoDetect(headers, ['date', 'fecha', 'dia']),
         descCol: autoDetect(headers, ['transaction', 'transactio', 'description', 'descripcion', 'concepto', 'titulo', 'desc']),
-        debitCol: autoDetect(headers, ['debit', 'egreso', 'monto', 'amount']),
-        creditCol: autoDetect(headers, ['credit', 'ingreso']),
+        amountCol: autoDetect(headers.filter(header => !/^(debit|debito|cargo|egreso|gasto)/i.test(header.trim())), ['amount', 'monto', 'importe', 'valor']),
+        debitCol: autoDetect(headers, ['debit', 'debito', 'egreso', 'cargo']),
+        creditCol: autoDetect(headers, ['credit', 'credito', 'ingreso']),
         detailsCol: autoDetect(headers, ['details', 'detalle', 'detalles', 'additional']),
         categoryCol: autoDetect(headers, ['category', 'categoria', 'tag']),
+        paymentCol: autoDetect(headers, ['forma de pago', 'payment method', 'payment', 'pago', 'tarjeta', 'card']),
+        recurrenceCol: autoDetect(headers, ['tipo de gasto', 'recurrence', 'recurrencia', 'recurrente']),
+        periodicityCol: autoDetect(headers, ['frecuencia', 'periodicity', 'periodicidad']),
+        forceCardDigits: '',
     });
 
     const [mapping, setMapping] = useState<ColumnMapping>(buildDefault);
     const set = (key: keyof ColumnMapping) => (e: React.ChangeEvent<HTMLSelectElement>) =>
         setMapping(prev => ({ ...prev, [key]: e.target.value }));
 
-    const canConfirm = !!mapping.dateCol && (!!mapping.debitCol || !!mapping.creditCol);
+    const canConfirm = !!mapping.dateCol
+        && (mapping.amountMode === 'single' ? !!mapping.amountCol : (!!mapping.debitCol || !!mapping.creditCol))
+        && (!mapping.forceCardDigits || /^\d{4}$/.test(mapping.forceCardDigits));
     const isImporting = importProgress !== null;
     const progressPct = isImporting ? Math.round((importProgress!.done / importProgress!.total) * 100) : 0;
 
@@ -88,9 +98,42 @@ export const ColumnMapModal = ({ headers, onConfirm, onCancel, importProgress }:
                     </div>
                 </div>
 
+                <div style={{ marginBottom: '1.1rem', padding: '0.8rem 0.85rem', background: 'var(--surface-alt)', borderRadius: '8px', border: `1px solid ${TOKEN.green}66` }}>
+                    <label htmlFor="import-card-digits" style={{ display: 'block', fontSize: '0.7rem', fontWeight: 800, color: TOKEN.text, marginBottom: '0.3rem' }}>{t('movements.import_assign_card')}</label>
+                    <div style={{ fontSize: '0.58rem', color: TOKEN.muted, marginBottom: '0.55rem' }}>{t('movements.import_assign_card_help')}</div>
+                    <input
+                        id="import-card-digits"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        list="import-card-options"
+                        maxLength={4}
+                        placeholder={t('movements.import_card_digits_placeholder')}
+                        value={mapping.forceCardDigits}
+                        onChange={e => setMapping(prev => ({ ...prev, forceCardDigits: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                        style={{ ...selectStyle, width: '100%', boxSizing: 'border-box', fontSize: '0.8rem' }}
+                    />
+                    <datalist id="import-card-options">
+                        {cards.map(digits => <option key={digits} value={digits}>{t('movements.import_card')} •••• {digits}</option>)}
+                    </datalist>
+                    {mapping.forceCardDigits.length > 0 && mapping.forceCardDigits.length < 4 && (
+                        <div style={{ fontSize: '0.58rem', fontWeight: 700, color: TOKEN.red, marginTop: '0.35rem' }}>{t('movements.import_card_digits_error')}</div>
+                    )}
+                </div>
+
                 {/* Field mappings */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
-                    {MAPPING_FIELDS.map(({ key, labelKey, required }) => (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: TOKEN.text }}>{t('movements.import_amount_mode')}</span>
+                        <select value={mapping.amountMode} onChange={e => setMapping(prev => ({ ...prev, amountMode: e.target.value as ColumnMapping['amountMode'] }))} style={{ ...selectStyle, width: '100%' }}>
+                            <option value="single">{t('movements.import_single_amount_mode')}</option>
+                            <option value="separate">{t('movements.import_separate_amount_mode')}</option>
+                        </select>
+                    </div>
+                    {(mapping.amountMode === 'single'
+                        ? [{ key: 'amountCol' as const, labelKey: 'movements.import_amount_column', required: true }, ...MAPPING_FIELDS]
+                        : [{ key: 'debitCol' as const, labelKey: 'movements.import_debit_column' }, { key: 'creditCol' as const, labelKey: 'movements.import_credit_column' }, ...MAPPING_FIELDS]
+                    ).map(({ key, labelKey, required }) => (
                         <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', alignItems: 'center', gap: '0.75rem' }}>
                             <span style={{ fontSize: '0.7rem', fontWeight: 700, color: required ? TOKEN.text : TOKEN.muted }}>
                                 {t(labelKey as any)}{required && <span style={{ color: TOKEN.red }}> *</span>}
@@ -102,6 +145,10 @@ export const ColumnMapModal = ({ headers, onConfirm, onCancel, importProgress }:
                         </div>
                     ))}
                 </div>
+
+                {mapping.amountMode === 'single' && (
+                    <div style={{ fontSize: '0.58rem', color: TOKEN.muted, marginTop: '-0.8rem', marginBottom: '0.8rem' }}>{t('movements.import_signed_amount_help')}</div>
+                )}
 
                 {!canConfirm && (
                     <div style={{ fontSize: '0.65rem', color: TOKEN.red, marginBottom: '0.85rem', fontWeight: 700 }}>

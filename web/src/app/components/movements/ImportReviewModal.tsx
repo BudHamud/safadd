@@ -163,11 +163,24 @@ export const ImportReviewModal = ({ blocks, sym, onConfirm, onCancel, importProg
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                                         {activeBlock.excelRows.map((row, i) => {
                                             const isSel = (selected.get(activeBlock.monthKey) ?? new Set()).has(i);
+                                            const payment = row.paymentMethod === 'tarjeta'
+                                                ? `${t('movements.import_card')}${row.cardDigits ? ` •••• ${row.cardDigits}` : ''}`
+                                                : t('movements.import_cash');
+                                            const recurrence = row.goalType === 'mensual'
+                                                ? t('movements.import_monthly')
+                                                : row.goalType === 'periodo'
+                                                    ? t('movements.import_periodic', { months: row.periodicity ?? 1 })
+                                                    : row.goalType === 'meta'
+                                                        ? t('movements.import_goal')
+                                                        : t('movements.import_one_time');
                                             return (
                                                 <label key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 0.65rem', borderRadius: '6px', background: isSel ? 'var(--surface-alt)' : 'var(--surface)', border: `1px solid ${isSel ? 'var(--border)' : 'var(--border-dim)'}`, cursor: isImporting ? 'default' : 'pointer', transition: 'all 0.1s' }}>
                                                     <input type="checkbox" checked={isSel} onChange={() => !isImporting && toggleRow(activeBlock.monthKey, i)} style={{ accentColor: TOKEN.green, flexShrink: 0 }} />
                                                     <span style={{ fontSize: '0.6rem', color: TOKEN.muted, flexShrink: 0, minWidth: '54px' }}>{row.date}</span>
-                                                    <span style={{ flex: 1, fontSize: '0.68rem', fontWeight: 700, color: TOKEN.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.desc || t('movements.import_empty_desc')}</span>
+                                                    <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.16rem' }}>
+                                                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: TOKEN.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.desc || t('movements.import_empty_desc')}</span>
+                                                        <span style={{ fontSize: '0.55rem', color: TOKEN.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.tag} · {payment} · {recurrence}</span>
+                                                    </span>
                                                     <span style={{ fontSize: '0.72rem', fontWeight: 900, flexShrink: 0, color: row.type === 'expense' ? TOKEN.red : TOKEN.green }}>
                                                         {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount, sym)}
                                                     </span>

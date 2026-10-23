@@ -29,7 +29,7 @@ export async function PUT(req: Request) {
         const { oldTag, newTag, newIcon } = await req.json();
 
         const normalizedOldTag = normalizeTagInput(oldTag);
-        const normalizedNewTag = normalizeTagInput(newTag);
+        const normalizedNewTag = normalizeText(newTag, 64);
         const safeNewIcon = normalizeText(newIcon, 8);
 
         if (!normalizedOldTag || !normalizedNewTag || !safeNewIcon) {

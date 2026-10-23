@@ -156,13 +156,17 @@ export const ProfileTab = ({
     // ── Derived data ──────────────────────────────────────────
     const uniqueCategories = useMemo(() => {
         const catMap: Record<string, { tag: string; icon: string; count: number }> = {};
+        const normalizeCategory = (value: string) => value.trim().toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const categoryLabels = new Map(availableCategories.map(category => [normalizeCategory(category.label), category]));
         availableCategories.forEach(c => {
-            catMap[c.label] = { tag: c.label, icon: c.icon, count: 0 };
+            catMap[normalizeCategory(c.label)] = { tag: c.label, icon: c.icon, count: 0 };
         });
         transactions.forEach(tx => {
-            if (!catMap[tx.tag]) catMap[tx.tag] = { tag: tx.tag, icon: tx.icon, count: 0 };
-            if (tx.icon && tx.icon.length < 5) catMap[tx.tag].icon = tx.icon;
-            catMap[tx.tag].count += 1;
+            const key = normalizeCategory(tx.tag);
+            const category = categoryLabels.get(key);
+            if (!catMap[key]) catMap[key] = { tag: category?.label ?? tx.tag, icon: category?.icon ?? tx.icon, count: 0 };
+            if (!category && tx.icon && tx.icon.length < 5) catMap[key].icon = tx.icon;
+            catMap[key].count += 1;
         });
         return Object.values(catMap).sort((a, b) => b.count - a.count);
     }, [transactions, availableCategories]);

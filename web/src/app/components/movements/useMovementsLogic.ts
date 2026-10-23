@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Transaction } from '../../../types';
+import { Category, Transaction } from '../../../types';
 import { getCurrencySymbol } from '@safed/shared/currency';
 import {
     MONTHS, parseDate,
@@ -121,6 +121,7 @@ export const useMovementsLogic = (
     globalCurrency: string,
     monthlyGoal: number,
     onTransactionsUpdated: () => void,
+    availableCategories: Category[] = [],
 ) => {
     const { lang, t } = useLanguage();
     const dialog = useDialog();
@@ -309,12 +310,21 @@ export const useMovementsLogic = (
 
         for (const { rows } of importDraft.sheets) {
             for (const raw of rows) {
-                const keyCols = [mapping.dateCol, mapping.debitCol, mapping.creditCol].filter(Boolean);
+                const keyCols = [mapping.dateCol, mapping.amountCol, mapping.debitCol, mapping.creditCol].filter(Boolean);
                 if (keyCols.length > 0 && keyCols.every(k => !String(raw[k] ?? '').trim())) continue;
 
                 const { row, resolvedDate } = parseExcelRowMapped(raw, mapping, importDraft.fallbackYear, lastDate);
                 lastDate = resolvedDate;
                 if (!row) continue;
+                const normalizedTag = row.tag.trim().toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                const existingCategory = availableCategories.find(category =>
+                    category.label.trim().toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') === normalizedTag
+                );
+                if (existingCategory) row.tag = existingCategory.label;
+                if (mapping.forceCardDigits) {
+                    row.paymentMethod = 'tarjeta';
+                    row.cardDigits = mapping.forceCardDigits;
+                }
                 parsedRows.push(row);
             }
         }
