@@ -31,9 +31,9 @@ function getRequestDeviceId(req: Request, fallback?: unknown) {
     return normalized.length > 0 ? normalized : null;
 }
 
-async function registerDeviceIfAllowed(authId: string, planTier: string, deviceIds: string[], deviceId: string | null) {
+async function registerDeviceIfAllowed(authId: string, planTier: string, deviceIds: string[], deviceId: string | null, role?: string) {
     const normalizedDeviceIds = normalizeDeviceIds(deviceIds);
-    const deviceAccess = getDeviceAccess(planTier, normalizedDeviceIds, deviceId);
+    const deviceAccess = getDeviceAccess(planTier, normalizedDeviceIds, deviceId, role);
 
     if (!deviceAccess.shouldRegister || !deviceId) {
         return {
@@ -51,7 +51,7 @@ async function registerDeviceIfAllowed(authId: string, planTier: string, deviceI
 
     return {
         deviceIds: nextDeviceIds,
-        deviceAccess: getDeviceAccess(planTier, nextDeviceIds, deviceId),
+        deviceAccess: getDeviceAccess(planTier, nextDeviceIds, deviceId, role),
     };
 }
 
@@ -74,7 +74,7 @@ function buildUserResponse(profile: {
         planTier: normalizedPlanTier,
         deviceIds: normalizedDeviceIds,
         email,
-        plan: buildPlanPayload(normalizedPlanTier, normalizedDeviceIds, deviceId),
+        plan: buildPlanPayload(normalizedPlanTier, normalizedDeviceIds, deviceId, profile.role),
     };
 }
 
@@ -102,7 +102,7 @@ export async function GET(req: Request) {
         if (!profile) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
         const deviceId = getRequestDeviceId(req);
-        const registration = await registerDeviceIfAllowed(user.id, profile.planTier, profile.deviceIds, deviceId);
+        const registration = await registerDeviceIfAllowed(user.id, profile.planTier, profile.deviceIds, deviceId, profile.role);
 
         return NextResponse.json(buildUserResponse({
             ...profile,
@@ -155,9 +155,9 @@ export async function PUT(req: Request) {
         const rawAvailableCurrencies = availableCurrencies === undefined
             ? currentAvailableCurrencies
             : normalizeAvailableCurrencies(availableCurrencies, nextCurrency);
-        const nextAvailableCurrencies = clampAvailableCurrenciesForPlan(rawAvailableCurrencies, nextCurrency, normalizedPlanTier);
+        const nextAvailableCurrencies = clampAvailableCurrenciesForPlan(rawAvailableCurrencies, nextCurrency, normalizedPlanTier, currentProfile.role);
 
-        const maxAvailableCurrencies = getMaxAvailableCurrencies(normalizedPlanTier);
+        const maxAvailableCurrencies = getMaxAvailableCurrencies(normalizedPlanTier, currentProfile.role);
         if (maxAvailableCurrencies !== null && rawAvailableCurrencies.length > maxAvailableCurrencies) {
             return NextResponse.json({
                 errorCode: 'plan_limit_secondary_currencies',
@@ -172,7 +172,7 @@ export async function PUT(req: Request) {
                 : nextCurrency);
 
         const deviceId = getRequestDeviceId(req, requestDeviceId);
-        const deviceAccess = getDeviceAccess(normalizedPlanTier, currentProfile.deviceIds, deviceId);
+        const deviceAccess = getDeviceAccess(normalizedPlanTier, currentProfile.deviceIds, deviceId, currentProfile.role);
         if (deviceAccess.deviceLimitReached) {
             return NextResponse.json({
                 errorCode: 'device_limit_reached',

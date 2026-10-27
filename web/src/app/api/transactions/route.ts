@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     const { user, error, status } = await requireAuth(req);
     if (!user) return NextResponse.json({ error }, { status });
 
-    const userProfile = await prisma.user.findUnique({ where: { authId: user.id }, select: { id: true, planTier: true } });
+    const userProfile = await prisma.user.findUnique({ where: { authId: user.id }, select: { id: true, planTier: true, role: true } });
     if (!userProfile?.id) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     try {
@@ -52,8 +52,9 @@ export async function POST(req: Request) {
             }
 
             const today = new Date().toISOString().slice(0, 10);
-            const importLimit = getPlanEntitlements(normalizePlanTier(userProfile.planTier)).importRowsPerDay;
-            const currentUsage = await prisma.importUsage.findUnique({
+            const isAdmin = userProfile.role === 'admin';
+            const importLimit = getPlanEntitlements(normalizePlanTier(userProfile.planTier), userProfile.role).importRowsPerDay;
+            const currentUsage = isAdmin ? null : await prisma.importUsage.findUnique({
                 where: {
                     userId_date: {
                         userId: userProfile.id,
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
             });
             const usedRows = currentUsage?.rowCount ?? 0;
 
-            if (usedRows + data.length > importLimit) {
+            if (!isAdmin && usedRows + data.length > importLimit) {
                 return NextResponse.json({
                     errorCode: 'plan_limit_import_rows',
                     limit: importLimit,
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
 
             await prisma.$transaction([
                 prisma.transaction.createMany({ data: rows }),
-                prisma.importUsage.upsert({
+                ...(isAdmin ? [] : [prisma.importUsage.upsert({
                     where: {
                         userId_date: {
                             userId: userProfile.id,
@@ -109,7 +110,7 @@ export async function POST(req: Request) {
                     update: {
                         rowCount: { increment: data.length },
                     },
-                }),
+                })]),
             ]);
 
             return NextResponse.json({ count: data.length });

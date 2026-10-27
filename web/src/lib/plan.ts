@@ -23,7 +23,22 @@ export function normalizePlanTier(value: unknown): PlanTier {
     return typeof value === 'string' && value.toLowerCase() === 'pro' ? 'pro' : 'free';
 }
 
-export function getPlanEntitlements(planTier: unknown): PlanEntitlements {
+export function getPlanEntitlements(planTier: unknown, role?: unknown): PlanEntitlements {
+    if (typeof role === 'string' && role.toLowerCase() === 'admin') {
+        return {
+            advancedAnalytics: true,
+            categoryGoals: true,
+            customCategories: true,
+            maxCustomCategories: null,
+            dataExport: true,
+            importRowsPerDay: Number.MAX_SAFE_INTEGER,
+            maxDevices: null,
+            maxSecondaryCurrencies: null,
+            prioritySupport: true,
+            travelMode: 'none',
+        };
+    }
+
     const tier = normalizePlanTier(planTier);
 
     if (tier === 'pro') {
@@ -63,14 +78,14 @@ export function normalizeDeviceIds(value: unknown): string[] {
     return Array.from(new Set(value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)));
 }
 
-export function getMaxAvailableCurrencies(planTier: unknown) {
-    const entitlements = getPlanEntitlements(planTier);
+export function getMaxAvailableCurrencies(planTier: unknown, role?: unknown) {
+    const entitlements = getPlanEntitlements(planTier, role);
     return entitlements.maxSecondaryCurrencies === null ? null : entitlements.maxSecondaryCurrencies + 1;
 }
 
-export function clampAvailableCurrenciesForPlan(availableCurrencies: string[], primaryCurrency: string, planTier: unknown) {
+export function clampAvailableCurrenciesForPlan(availableCurrencies: string[], primaryCurrency: string, planTier: unknown, role?: unknown) {
     const deduped = Array.from(new Set([primaryCurrency, ...availableCurrencies.filter((currency) => currency !== primaryCurrency)]));
-    const maxAvailableCurrencies = getMaxAvailableCurrencies(planTier);
+    const maxAvailableCurrencies = getMaxAvailableCurrencies(planTier, role);
 
     if (maxAvailableCurrencies === null || deduped.length <= maxAvailableCurrencies) {
         return deduped;
@@ -79,8 +94,8 @@ export function clampAvailableCurrenciesForPlan(availableCurrencies: string[], p
     return deduped.slice(0, maxAvailableCurrencies);
 }
 
-export function getDeviceAccess(planTier: unknown, deviceIds: string[], deviceId: string | null) {
-    const entitlements = getPlanEntitlements(planTier);
+export function getDeviceAccess(planTier: unknown, deviceIds: string[], deviceId: string | null, role?: unknown) {
+    const entitlements = getPlanEntitlements(planTier, role);
     const normalizedDeviceIds = normalizeDeviceIds(deviceIds);
     const alreadyRegistered = !!deviceId && normalizedDeviceIds.includes(deviceId);
     const maxDevices = entitlements.maxDevices;
@@ -96,11 +111,11 @@ export function getDeviceAccess(planTier: unknown, deviceIds: string[], deviceId
     };
 }
 
-export function buildPlanPayload(planTier: unknown, deviceIds: string[], deviceId: string | null) {
+export function buildPlanPayload(planTier: unknown, deviceIds: string[], deviceId: string | null, role?: unknown) {
     const tier = normalizePlanTier(planTier);
-    const entitlements = getPlanEntitlements(tier);
+    const entitlements = getPlanEntitlements(tier, role);
     const normalizedDeviceIds = normalizeDeviceIds(deviceIds);
-    const deviceAccess = getDeviceAccess(tier, normalizedDeviceIds, deviceId);
+    const deviceAccess = getDeviceAccess(tier, normalizedDeviceIds, deviceId, role);
 
     return {
         tier,

@@ -35,7 +35,11 @@ export const ImportReviewModal = ({ blocks, sym, onConfirm, onCancel, importProg
     const { t } = useLanguage();
     const [selected, setSelected] = useState<Map<string, Set<number>>>(() => {
         const m = new Map<string, Set<number>>();
-        blocks.forEach(b => m.set(b.monthKey, new Set(b.excelRows.map((_, i) => i))));
+        blocks.forEach(b => m.set(b.monthKey, new Set(
+            b.excelRows
+                .map((_, i) => i)
+                .filter(i => !b.possibleDuplicates[i]?.some(match => match.matchedBy.includes('amount')))
+        )));
         return m;
     });
     const [activeMonth, setActiveMonth] = useState(blocks[0]?.monthKey ?? '');
@@ -173,6 +177,7 @@ export const ImportReviewModal = ({ blocks, sym, onConfirm, onCancel, importProg
                                                     : row.goalType === 'meta'
                                                         ? t('movements.import_goal')
                                                         : t('movements.import_one_time');
+                                            const possibleDuplicates = activeBlock.possibleDuplicates[i] ?? [];
                                             return (
                                                 <label key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 0.65rem', borderRadius: '6px', background: isSel ? 'var(--surface-alt)' : 'var(--surface)', border: `1px solid ${isSel ? 'var(--border)' : 'var(--border-dim)'}`, cursor: isImporting ? 'default' : 'pointer', transition: 'all 0.1s' }}>
                                                     <input type="checkbox" checked={isSel} onChange={() => !isImporting && toggleRow(activeBlock.monthKey, i)} style={{ accentColor: TOKEN.green, flexShrink: 0 }} />
@@ -180,6 +185,11 @@ export const ImportReviewModal = ({ blocks, sym, onConfirm, onCancel, importProg
                                                     <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.16rem' }}>
                                                         <span style={{ fontSize: '0.68rem', fontWeight: 700, color: TOKEN.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.desc || t('movements.import_empty_desc')}</span>
                                                         <span style={{ fontSize: '0.55rem', color: TOKEN.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.tag} · {payment} · {recurrence}</span>
+                                                        {possibleDuplicates.map(({ transaction, matchedBy }) => (
+                                                            <span key={transaction.id} style={{ fontSize: '0.54rem', color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t('movements.import_duplicate_match_hint')}>
+                                                                {t('movements.import_possible_duplicate')}: {transaction.desc} · {formatDate(transaction.date)} · {formatCurrency(transaction.amount, sym)}{transaction.paymentMethod === 'tarjeta' && transaction.cardDigits ? ` · •••• ${transaction.cardDigits}` : ''} ({matchedBy.map(reason => t(`movements.import_match_${reason}` as any)).join(', ')})
+                                                            </span>
+                                                        ))}
                                                     </span>
                                                     <span style={{ fontSize: '0.72rem', fontWeight: 900, flexShrink: 0, color: row.type === 'expense' ? TOKEN.red : TOKEN.green }}>
                                                         {row.type === 'expense' ? '-' : '+'}{formatCurrency(row.amount, sym)}

@@ -482,7 +482,37 @@ export interface MonthBlock {
     excelExpense: number;
     existingIncome: number;
     existingExpense: number;
+    possibleDuplicates: Record<number, Array<{
+        transaction: Transaction;
+        matchedBy: Array<'amount' | 'name' | 'date'>;
+    }>>;
 }
+
+const normalizeDescription = (value: string) => value
+    .toLocaleLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const descriptionsMatch = (first: string, second: string) => {
+    const a = normalizeDescription(first);
+    const b = normalizeDescription(second);
+    if (!a || !b) return false;
+    if (a === b || (Math.min(a.length, b.length) >= 6 && (a.includes(b) || b.includes(a)))) return true;
+    const aWords = new Set(a.split(' ').filter(word => word.length >= 3));
+    const bWords = new Set(b.split(' ').filter(word => word.length >= 3));
+    if (aWords.size === 0 || bWords.size === 0) return false;
+    const shared = Array.from(aWords).filter(word => bWords.has(word)).length;
+    return shared / Math.min(aWords.size, bWords.size) >= 0.6;
+};
+
+const dateDistanceDays = (first: string, second: string) => {
+    const firstDate = parseDate(first);
+    const secondDate = parseDate(second);
+    if (!Number.isFinite(firstDate.getTime()) || !Number.isFinite(secondDate.getTime()) || firstDate.getTime() === 0 || secondDate.getTime() === 0) return null;
+    return Math.abs(Math.round((firstDate.getTime() - secondDate.getTime()) / 86_400_000));
+};
 
 /**
  * Groups parsed Excel rows by calendar month and cross-references against
@@ -512,6 +542,35 @@ export const buildImportReview = (
         const existing = existingByMonth.get(monthKey) ?? [];
         const [year, month] = monthKey.split('-').map(Number);
 
+        const possibleDuplicates: MonthBlock['possibleDuplicates'] = {};
+        excelRows.forEach((row, rowIndex) => {
+            const matches = existingTxs
+                .filter(tx => !tx.isCancelled && tx.type === row.type)
+                .map(tx => {
+                    const amountMatches = Math.abs(Math.abs(tx.amount) - Math.abs(row.amount)) < 0.01;
+                    const nameMatches = descriptionsMatch(tx.desc, row.desc);
+                    const dayDistance = dateDistanceDays(tx.date, row.date);
+                    const sameMonth = getMonthKey(tx.date) === getMonthKey(row.date);
+                    const dateMatches = dayDistance !== null && dayDistance <= 15;
+                    if (!sameMonth || !dateMatches) return null;
+                    const matchedBy: Array<'amount' | 'name' | 'date'> = [];
+                    if (amountMatches) matchedBy.push('amount');
+                    if (nameMatches) matchedBy.push('name');
+                    if (dateMatches) matchedBy.push('date');
+                    // An exact amount is useful to spot cross-card duplicates even when banks
+                    // produce different descriptions or posting dates. Name + date also helps
+                    // find the same payment when a currency conversion changes its amount.
+                    if (!amountMatches && !(nameMatches && dateMatches)) return null;
+                    const score = (amountMatches ? 4 : 0) + (nameMatches ? 2 : 0) + (dateMatches ? 1 : 0);
+                    return { transaction: tx, matchedBy, score, dayDistance };
+                })
+                .filter((match): match is NonNullable<typeof match> => match !== null)
+                .sort((a, b) => b.score - a.score || (a.dayDistance ?? Infinity) - (b.dayDistance ?? Infinity))
+                .slice(0, 3)
+                .map(({ transaction, matchedBy }) => ({ transaction, matchedBy }));
+            if (matches.length > 0) possibleDuplicates[rowIndex] = matches;
+        });
+
         blocks.push({
             monthKey,
             label: `${MONTHS[month - 1]} ${year}`,
@@ -521,6 +580,7 @@ export const buildImportReview = (
             excelExpense: excelRows.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0),
             existingIncome: existing.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0),
             existingExpense: existing.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
+            possibleDuplicates,
         });
     }
 
